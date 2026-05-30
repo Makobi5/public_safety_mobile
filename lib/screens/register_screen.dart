@@ -10,24 +10,28 @@ class RegisterScreen extends StatefulWidget {
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
+
+  // 1. FIXED: Added missing village controller and other controllers
   final _fNameController = TextEditingController();
   final _lNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
+  final _villageController = TextEditingController(); // Added this
 
   String? _selectedRegion;
   String? _selectedDistrict;
-  String? _selectedVillage; // Changed to match dropdown logic
+  String? _selectedSubCounty; // FIXED: Changed from List<String> to String?
+
   bool _isAgreed = false;
   bool _isLoading = false;
   bool _obscurePass = true;
 
-  // 1. STATE VARIABLES (NOT FINAL)
+  // State lists for dropdowns
   List<String> _districts = [];
-  List<String> _villages = [];
+  List<String> _subCounties = [];
 
-  // 2. DATA SOURCE
+  // Realistic Uganda Location Data
   final Map<String, Map<String, List<String>>> _locationData = {
     "Western": {
       "Kabale": [
@@ -36,40 +40,66 @@ class _RegisterScreenState extends State<RegisterScreen> {
         "Southern Division",
         "Kyanamira",
         "Maziba",
+        "Butanda",
+        "Kitumba",
       ],
       "Mbarara": [
         "Mbarara City North",
         "Mbarara City South",
         "Biharwe",
         "Kakiika",
+        "Nyakayojo",
       ],
-      "Rubanda": ["Hamurwa", "Muko", "Bubare", "Nyamweru"],
-      "Rukiga": ["Mparo", "Kashambya", "Kamwezi", "Muhanga"],
+      "Rubanda": [
+        "Hamurwa",
+        "Muko",
+        "Bubare",
+        "Nyamweru",
+        "Rubanda Town Council",
+      ],
+      "Rukiga": ["Mparo", "Kashambya", "Kamwezi", "Muhanga Town Council"],
+      "Hoima": ["Hoima City East", "Hoima City West", "Kigorobya", "Buseruka"],
     },
     "Central": {
       "Kampala": [
         "Central Division (CBD)",
-        "Nakawa",
-        "Makindye",
-        "Kawempe",
-        "Rubaga",
+        "Nakawa Division",
+        "Makindye Division",
+        "Kawempe Division",
+        "Rubaga Division",
       ],
       "Wakiso": [
-        "Entebbe Municipality",
         "Kira Municipality",
-        "Nansana",
-        "Kyengera",
+        "Nansana Municipality",
+        "Entebbe Municipality",
+        "Kyengera Town Council",
+        "Kasangati",
       ],
+      "Mukono": ["Mukono Central", "Goma Division", "Mampugwe", "Nagojje"],
+      "Masaka": ["Masaka City East", "Masaka City West", "Nyendo-Mukungwe"],
     },
     "Eastern": {
-      "Jinja": ["Jinja City North", "Jinja City South", "Bugembe"],
-      "Mbale": ["Industrial Division", "Northern Division"],
+      "Jinja": ["Jinja City North", "Jinja City South", "Bugembe", "Mafubira"],
+      "Mbale": ["Industrial Division", "Northern Division", "Nakaloke"],
+      "Soroti": ["Soroti City East", "Soroti City West", "Gweri"],
     },
     "Northern": {
-      "Gulu": ["Pece-Laroo Division", "Bardege-Layibi Division"],
-      "Lira": ["Lira City East", "Lira City West"],
+      "Gulu": ["Pece-Laroo Division", "Bardege-Layibi Division", "Bungatira"],
+      "Lira": ["Lira City East", "Lira City West", "Adyel Division"],
+      "Arua": ["Ayivu Division", "Arua Central Division", "Vurra"],
     },
   };
+
+  @override
+  void dispose() {
+    _fNameController.dispose();
+    _lNameController.dispose();
+    _emailController.dispose();
+    _passwordController.dispose();
+    _confirmPasswordController.dispose();
+    _villageController.dispose();
+    super.dispose();
+  }
 
   Future<void> _handleRegister() async {
     if (!_formKey.currentState!.validate()) return;
@@ -85,6 +115,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _isLoading = true);
 
     try {
+      // FIXED: Sending all hierarchical data to Supabase
       await AuthService().signUp(
         email: _emailController.text.trim(),
         password: _passwordController.text.trim(),
@@ -92,7 +123,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
         lastName: _lNameController.text.trim(),
         region: _selectedRegion!,
         district: _selectedDistrict!,
-        village: _selectedVillage!,
+        subCounty: _selectedSubCounty!, // New field
+        village: _villageController.text.trim(), // From text controller
       );
 
       if (mounted) {
@@ -153,24 +185,18 @@ class _RegisterScreenState extends State<RegisterScreen> {
               _buildField(_fNameController, "First Name", Icons.person),
               _buildField(_lNameController, "Last Name", Icons.person),
 
-              // 1. REGION DROPDOWN
+              // 1. REGION
               _buildDropdown(
                 "Select Region",
                 Icons.map,
                 _locationData.keys.toList(),
                 (val) {
-                  if (val == null)
-                    return; // Don't do anything if selection is null
-
                   setState(() {
                     _selectedRegion = val;
-                    // Reset dependent fields
                     _selectedDistrict = null;
-                    _selectedVillage = null;
-
-                    // SAFE LOOKUP: Use ? and ?? to prevent the crash you saw
+                    _selectedSubCounty = null;
                     _districts = _locationData[val]?.keys.toList() ?? [];
-                    _villages = [];
+                    _subCounties = [];
                   });
                 },
                 _selectedRegion,
@@ -184,22 +210,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 (val) {
                   setState(() {
                     _selectedDistrict = val;
-                    _selectedVillage = null;
-                    _villages = _locationData[_selectedRegion]![val]!;
+                    _selectedSubCounty = null;
+                    _subCounties = _locationData[_selectedRegion]?[val] ?? [];
                   });
                 },
                 _selectedDistrict,
                 enabled: _selectedRegion != null,
               ),
 
-              // 3. VILLAGE/AREA
+              // 3. SUB-COUNTY
               _buildDropdown(
-                "Select Village/Area",
-                Icons.location_on,
-                _villages,
-                (val) => setState(() => _selectedVillage = val),
-                _selectedVillage,
+                "Select Sub-County / Division",
+                Icons.layers,
+                _subCounties,
+                (val) => setState(() => _selectedSubCounty = val),
+                _selectedSubCounty,
                 enabled: _selectedDistrict != null,
+              ),
+
+              // 4. VILLAGE (Text Field)
+              _buildField(
+                _villageController,
+                "Village / Local Area Name",
+                Icons.home_work,
+                hint: "e.g. Kisenyi, Cell A, Lower Konge",
               ),
 
               _buildField(_emailController, "Email Address", Icons.email),
@@ -255,12 +289,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
     );
   }
 
+  // FIXED: Added 'hint' parameter to helper
   Widget _buildField(
     TextEditingController controller,
     String label,
     IconData icon, {
     bool isPass = false,
     bool isConfirm = false,
+    String? hint,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 16),
@@ -269,6 +305,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
         obscureText: isPass ? _obscurePass : false,
         decoration: InputDecoration(
           labelText: label,
+          hintText: hint, // Set hint here
           prefixIcon: Icon(icon, color: const Color(0xFF003366)),
           border: const OutlineInputBorder(),
           suffixIcon: isPass
