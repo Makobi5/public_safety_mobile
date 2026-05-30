@@ -18,35 +18,71 @@ class _LoginScreenState extends State<LoginScreen> {
   final _authService = AuthService();
 
   Future<void> _handleLogin() async {
+    if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
+      _showErrorSnackBar("Please enter your email and password.");
+      return;
+    }
+
     setState(() => _isLoading = true);
+
     try {
+      // 1. Attempt Sign In
       await _authService.signIn(
         _emailController.text.trim(),
         _passwordController.text.trim(),
       );
 
-      // Check if they are actually a 'member'
+      // 2. Check if they are a 'member'
       final role = await _authService.getUserRole();
+
       if (role == 'member') {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const UserDashboard()),
-        );
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const UserDashboard()),
+          );
+        }
       } else {
+        // Admin trying to log into user side
         await _authService.signOut();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Access Denied: Not a Community Member account."),
-          ),
+        _showErrorSnackBar(
+          "Please use the Admin Login screen for this account.",
         );
       }
     } catch (e) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Login Failed: ${e.toString()}")));
+      // 3. Translate technical errors to user-friendly text
+      String message = "Login failed. Please try again.";
+
+      final err = e.toString().toLowerCase();
+      if (err.contains('invalid_credentials')) {
+        message = "The email or password you entered is incorrect.";
+      } else if (err.contains('network')) {
+        message = "Check your internet connection and try again.";
+      }
+
+      _showErrorSnackBar(message);
     } finally {
-      setState(() => _isLoading = false);
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  // Re-use the same UI helper here
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: Colors.red.shade700,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.all(15),
+      ),
+    );
   }
 
   @override

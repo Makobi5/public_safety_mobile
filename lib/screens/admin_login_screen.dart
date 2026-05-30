@@ -16,55 +16,76 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   bool _obscurePassword = true; // Added for password toggle
 
   Future<void> _handleAdminLogin() async {
-    // 1. Basic Validation
+    // Basic validation
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Please fill in all fields")),
-      );
+      _showErrorSnackBar("Please enter both email and password.");
       return;
     }
 
     setState(() => _isLoading = true);
 
     try {
-      // 2. Perform sign in
+      // 1. Attempt Sign In
       await AuthService().signIn(
         _emailController.text.trim(),
         _passwordController.text.trim(),
       );
 
-      // 3. Check for Admin Role
+      // 2. Check Role
       final role = await AuthService().getUserRole();
 
       if (role == 'admin' || role == 'super_admin') {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (context) => const AdminDashboard()),
-        );
-      } else {
-        // Not an admin? Kick them out.
-        await AuthService().signOut();
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text("Access Denied: Not an authorized admin account"),
-              backgroundColor: Colors.red,
-            ),
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(builder: (context) => const AdminDashboard()),
           );
         }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("Login Failed: ${e.toString()}"),
-            backgroundColor: Colors.red,
-          ),
+      } else {
+        // Wrong account type: Log them out immediately
+        await AuthService().signOut();
+        _showErrorSnackBar(
+          "Access Denied: This account does not have Admin privileges.",
         );
       }
+    } catch (e) {
+      // 3. Handle Errors with friendly messages
+      String message = "An unexpected error occurred.";
+
+      if (e.toString().contains('invalid_credentials')) {
+        message = "Incorrect email or password. Please try again.";
+      } else if (e.toString().contains('network_error')) {
+        message = "No internet connection detected.";
+      } else if (e.toString().contains('too_many_requests')) {
+        message = "Too many attempts. Please try again in a minute.";
+      }
+
+      _showErrorSnackBar(message);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  // Helper to show the red floating SnackBar
+  void _showErrorSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(message, style: const TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+        backgroundColor: Colors.red.shade800,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.all(20),
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
   @override
