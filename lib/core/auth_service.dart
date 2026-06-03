@@ -40,7 +40,7 @@ class AuthService {
         'district': district,
         'sub_county': subCounty,
         'village_area': village,
-        'role': 'member',
+        'role': 'standard_user',
       });
     }
   }
