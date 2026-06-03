@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'welcome_screen.dart'; // Ensure this is imported
+import 'user_management_screen.dart';
 
 class AdminDashboard extends StatelessWidget {
   const AdminDashboard({super.key});
@@ -226,10 +227,44 @@ class AdminDashboard extends StatelessWidget {
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        backgroundColor: const Color(0xFF003366),
-        onPressed: () {},
-        child: const Icon(Icons.person_add, color: Colors.white),
+      floatingActionButton: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          // 1. User Management Button (Light Blue)
+          FloatingActionButton(
+            heroTag: "user_management_fab", // Unique tag required
+            backgroundColor: Colors.blue,
+            elevation: 4,
+            tooltip: "User Management",
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const UserManagementScreen(),
+                ),
+              );
+            },
+            child: const Icon(Icons.people, color: Colors.white),
+          ),
+
+          const SizedBox(width: 16), // Space between buttons
+          // 2. Add Admin Button (Dark Blue matching your theme)
+          FloatingActionButton(
+            heroTag: "add_admin_fab", // Unique tag required
+            backgroundColor: const Color(0xFF003366),
+            elevation: 4,
+            tooltip: "Add Admin",
+            onPressed: () {
+              // We will implement the 'Add Admin' form logic next
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text("Add Admin feature coming next..."),
+                ),
+              );
+            },
+            child: const Icon(Icons.person_add, color: Colors.white),
+          ),
+        ],
       ),
     );
   }

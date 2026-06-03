@@ -13,10 +13,9 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   bool _isLoading = false;
-  bool _obscurePassword = true; // Added for password toggle
+  bool _obscurePassword = true;
 
   Future<void> _handleAdminLogin() async {
-    // Basic validation
     if (_emailController.text.isEmpty || _passwordController.text.isEmpty) {
       _showErrorSnackBar("Please enter both email and password.");
       return;
@@ -49,24 +48,25 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
         );
       }
     } catch (e) {
-      // 3. Handle Errors with friendly messages
+      debugPrint("DEBUG AUTH ERROR: $e");
       String message = "An unexpected error occurred.";
+      final errorString = e.toString().toLowerCase();
 
-      if (e.toString().contains('invalid_credentials')) {
-        message = "Incorrect email or password. Please try again.";
-      } else if (e.toString().contains('network_error')) {
-        message = "No internet connection detected.";
-      } else if (e.toString().contains('too_many_requests')) {
-        message = "Too many attempts. Please try again in a minute.";
+      if (errorString.contains('invalid_credentials')) {
+        message = "Incorrect email or password.";
+      } else if (errorString.contains('network_error')) {
+        message = "No internet connection.";
+      } else if (errorString.contains('too_many_requests')) {
+        message = "Too many attempts. Try again in a minute.";
+      } else {
+        message = "Error: ${e.toString().split(':').last.trim()}";
       }
-
       _showErrorSnackBar(message);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // Helper to show the red floating SnackBar
   void _showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -115,8 +115,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
               style: TextStyle(color: Colors.grey),
             ),
             const SizedBox(height: 24),
-
-            // Info Alert Box
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
@@ -138,7 +136,6 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                 ],
               ),
             ),
-
             const SizedBox(height: 40),
             TextField(
               controller: _emailController,
@@ -160,9 +157,8 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
                   icon: Icon(
                     _obscurePassword ? Icons.visibility : Icons.visibility_off,
                   ),
-                  onPressed: () {
-                    setState(() => _obscurePassword = !_obscurePassword);
-                  },
+                  onPressed: () =>
+                      setState(() => _obscurePassword = !_obscurePassword),
                 ),
                 border: const OutlineInputBorder(),
               ),
@@ -170,15 +166,11 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
             Align(
               alignment: Alignment.centerRight,
               child: TextButton(
-                onPressed: () {
-                  // Link Forgot Password Logic here
-                },
+                onPressed: () {},
                 child: const Text("Forgot Password?"),
               ),
             ),
             const SizedBox(height: 30),
-
-            // CONNECTED BUTTON
             ElevatedButton(
               onPressed: _isLoading ? null : _handleAdminLogin,
               style: ElevatedButton.styleFrom(
@@ -217,4 +209,4 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
       ),
     );
   }
-}
+} // Class closes correctly here at the very end
