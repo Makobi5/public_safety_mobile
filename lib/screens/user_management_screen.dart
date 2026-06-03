@@ -254,39 +254,75 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
 
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text("Confirm Delete"),
-        content: Text(
-          "Are you sure you want to delete ${targetUser['first_name']}? This action cannot be undone.",
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text("Cancel"),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(20),
-              ),
+      barrierDismissible: false, // Prevent clicking outside during delete
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          bool _isDeleting = false;
+
+          return AlertDialog(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
             ),
-            onPressed: () async {
-              try {
-                await supabase
-                    .from('user_profiles')
-                    .delete()
-                    .eq('user_id', targetUser['user_id']);
-                if (mounted) Navigator.pop(context);
-                _fetchUsers();
-              } catch (e) {
-                debugPrint("Delete error: $e");
-              }
-            },
-            child: const Text("Delete", style: TextStyle(color: Colors.white)),
-          ),
-        ],
+            title: const Text("Confirm Delete"),
+            content: _isDeleting
+                ? const SizedBox(
+                    height: 100,
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                : Text(
+                    "Are you sure you want to delete ${targetUser['first_name']} ${targetUser['last_name']}? This action will remove their account permanently.",
+                  ),
+            actions: _isDeleting
+                ? []
+                : [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text("Cancel"),
+                    ),
+                    ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red,
+                      ),
+                      onPressed: () async {
+                        setDialogState(() => _isDeleting = true);
+
+                        try {
+                          // CALL THE NEW DELETE RPC
+                          await supabase.rpc(
+                            'admin_delete_user',
+                            params: {'target_user_id': targetUser['user_id']},
+                          );
+
+                          if (mounted) {
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text("User deleted successfully"),
+                                backgroundColor: Colors.green,
+                              ),
+                            );
+                            _fetchUsers(); // Refresh the list
+                          }
+                        } catch (e) {
+                          if (mounted) {
+                            Navigator.pop(context);
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text("Delete failed: $e"),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        }
+                      },
+                      child: const Text(
+                        "Delete",
+                        style: TextStyle(color: Colors.white),
+                      ),
+                    ),
+                  ],
+          );
+        },
       ),
     );
   }
