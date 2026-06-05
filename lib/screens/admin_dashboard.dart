@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'welcome_screen.dart'; // Ensure this is imported
 import 'user_management_screen.dart';
+import 'add_admin_screen.dart';
 
 class AdminDashboard extends StatelessWidget {
   const AdminDashboard({super.key});
@@ -249,17 +250,15 @@ class AdminDashboard extends StatelessWidget {
 
           const SizedBox(width: 16), // Space between buttons
           // 2. Add Admin Button (Dark Blue matching your theme)
+          // Update your FAB navigation logic
           FloatingActionButton(
-            heroTag: "add_admin_fab", // Unique tag required
+            heroTag: "add_admin_fab",
             backgroundColor: const Color(0xFF003366),
-            elevation: 4,
-            tooltip: "Add Admin",
             onPressed: () {
-              // We will implement the 'Add Admin' form logic next
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text("Add Admin feature coming next..."),
-                ),
+              // Navigate to the newly created screen
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const AddAdminScreen()),
               );
             },
             child: const Icon(Icons.person_add, color: Colors.white),
