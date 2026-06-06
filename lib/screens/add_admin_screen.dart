@@ -24,28 +24,30 @@ class _AddAdminScreenState extends State<AddAdminScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final supabase = Supabase.instance.client;
-
-      // CALL THE SILENT CREATION RPC
-      await supabase.rpc(
-        'admin_create_user',
-        params: {
-          'new_email': _emailController.text.trim(),
-          'new_password': _passController.text.trim(),
-          'new_first_name': _fNameController.text.trim(),
-          'new_last_name': _lNameController.text.trim(),
-          'new_role': _selectedRole,
+      // CALL THE EDGE FUNCTION INSTEAD OF RPC
+      final response = await Supabase.instance.client.functions.invoke(
+        'swift-handler',
+        body: {
+          'email': _emailController.text.trim(),
+          'password': _passController.text.trim(),
+          'first_name': _fNameController.text.trim(),
+          'last_name': _lNameController.text.trim(),
+          'role': _selectedRole,
         },
       );
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Admin account created successfully!"),
-            backgroundColor: Colors.green,
-          ),
-        );
-        Navigator.pop(context); // Go back to dashboard
+      if (response.status == 200) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text("Admin account created successfully!"),
+              backgroundColor: Colors.green,
+            ),
+          );
+          Navigator.pop(context);
+        }
+      } else {
+        throw response.data['error'] ?? "Failed to create user";
       }
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
