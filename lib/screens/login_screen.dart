@@ -35,7 +35,7 @@ class _LoginScreenState extends State<LoginScreen> {
       // 2. Check if they are a 'member'
       final role = await _authService.getUserRole();
 
-      if (role == 'member') {
+      if (role == 'standard_user') {
         if (mounted) {
           Navigator.pushReplacement(
             context,
