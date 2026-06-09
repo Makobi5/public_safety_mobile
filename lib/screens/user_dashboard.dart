@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'incident_report_screen.dart'; // We will build this next
-import 'user_dashboard.dart';
 import 'welcome_screen.dart';
+import 'user_profile_screen.dart';
 
 class UserDashboard extends StatefulWidget {
   const UserDashboard({super.key});
@@ -41,35 +41,54 @@ class _UserDashboardState extends State<UserDashboard> {
       backgroundColor: Colors.white,
       appBar: AppBar(
         backgroundColor: const Color(0xFF003366),
+        elevation: 0,
         title: const Text(
           "PSRA",
           style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
         actions: [
+          // 1. REFRESH BUTTON: Calls the data fetch function
           IconButton(
             icon: const Icon(Icons.refresh, color: Colors.white),
-            onPressed: () {},
+            tooltip: 'Refresh Data',
+            onPressed: () => _fetchUserData(),
           ),
+          // 2. PROFILE BUTTON: Navigates to the User Profile Screen
           IconButton(
             icon: const Icon(Icons.account_circle, color: Colors.white),
-            onPressed: () {},
+            tooltip: 'My Profile',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const UserProfileScreen(),
+                ),
+              ).then(
+                (_) => _fetchUserData(),
+              ); // Refresh dashboard when returning from profile
+            },
           ),
+          // 3. LOGOUT BUTTON: Signs out and clears navigation history
           IconButton(
             icon: const Icon(Icons.logout, color: Colors.white),
+            tooltip: 'Logout',
             onPressed: () async {
               await supabase.auth.signOut();
-              Navigator.of(context).pushAndRemoveUntil(
-                MaterialPageRoute(builder: (context) => const WelcomeScreen()),
-                (route) =>
-                    false, // This removes all previous screens from memory
-              ); // Go back to start
+              if (mounted) {
+                Navigator.of(context).pushAndRemoveUntil(
+                  MaterialPageRoute(
+                    builder: (context) => const WelcomeScreen(),
+                  ),
+                  (route) => false,
+                );
+              }
             },
           ),
         ],
       ),
       body: Column(
         children: [
-          // Header
+          // Header matching Image 2
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(20),
@@ -107,7 +126,9 @@ class _UserDashboardState extends State<UserDashboard> {
                   MaterialPageRoute(
                     builder: (context) => IncidentReportScreen(),
                   ),
-                );
+                ).then(
+                  (_) => _fetchUserData(),
+                ); // Refresh after submitting a report
               },
               icon: const Icon(Icons.add_circle_outline, color: Colors.white),
               label: const Text(
@@ -115,7 +136,7 @@ class _UserDashboardState extends State<UserDashboard> {
                 style: TextStyle(color: Colors.white, fontSize: 18),
               ),
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.green,
+                backgroundColor: Colors.green.shade600,
                 minimumSize: const Size(double.infinity, 55),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(30),
@@ -125,8 +146,8 @@ class _UserDashboardState extends State<UserDashboard> {
           ),
           const SizedBox(height: 20),
           // Stats Row
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 20),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
               children: [
                 Expanded(
@@ -136,7 +157,7 @@ class _UserDashboardState extends State<UserDashboard> {
                     color: Colors.green,
                   ),
                 ),
-                SizedBox(width: 15),
+                const SizedBox(width: 15),
                 Expanded(
                   child: _SummaryCard(
                     title: "Community Alert",
@@ -147,11 +168,19 @@ class _UserDashboardState extends State<UserDashboard> {
               ],
             ),
           ),
+          // Scrollable section for reports
           const Expanded(
             child: Center(
-              child: Text(
-                "You have no active reports.",
-                style: TextStyle(color: Colors.grey),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.assignment_outlined, size: 50, color: Colors.grey),
+                  SizedBox(height: 10),
+                  Text(
+                    "You have no active reports.",
+                    style: TextStyle(color: Colors.grey, fontSize: 16),
+                  ),
+                ],
               ),
             ),
           ),

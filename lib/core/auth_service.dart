@@ -59,7 +59,32 @@ class AuthService {
     return data?['role'] as String?;
   }
 
-  // 4. Sign Out
+  // 4. method to update the user's information in Supabase.
+  Future<void> updateProfile({
+    required String firstName,
+    required String lastName,
+    required String region,
+    required String district,
+    required String subCounty,
+    required String village,
+  }) async {
+    final user = _supabase.auth.currentUser;
+    if (user == null) return;
+
+    await _supabase
+        .from('user_profiles')
+        .update({
+          'first_name': firstName,
+          'last_name': lastName,
+          'region': region,
+          'district': district,
+          'sub_county': subCounty,
+          'village_area': village,
+        })
+        .eq('user_id', user.id);
+  }
+
+  // 5. Sign Out
   Future<void> signOut() async {
     await _supabase.auth.signOut();
   }
