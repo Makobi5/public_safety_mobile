@@ -315,13 +315,20 @@ class _UserDashboardState extends State<UserDashboard> {
     );
   }
 
-  // Helper for status colors
   Color _getStatusColor(String? status) {
-    switch (status?.toLowerCase()) {
-      case 'resolved':
+    switch (status) {
+      case 'Resolved':
         return Colors.green;
-      case 'investigating':
+      case 'Under Investigation':
+      case 'Filed':
         return Colors.blue;
+      case 'Action Taken':
+        return Colors.purple;
+      case 'Requires Follow-up':
+        return Colors.red;
+      case 'Closed':
+        return Colors.grey;
+      case 'Pending':
       default:
         return Colors.orange;
     }

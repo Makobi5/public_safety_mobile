@@ -5,6 +5,7 @@ import '../core/auth_service.dart';
 import 'welcome_screen.dart';
 import 'user_management_screen.dart';
 import 'add_admin_screen.dart';
+import 'case_detail_screen.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -302,7 +303,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ListTile(
         onTap: () {
-          // Future: Navigate to detail view
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => CaseDetailScreen(incident: incident),
+            ),
+          ).then(
+            (_) => _loadAllDashboardData(),
+          ); // Refresh dashboard numbers when coming back
         },
         leading: CircleAvatar(
           backgroundColor: isCritical
