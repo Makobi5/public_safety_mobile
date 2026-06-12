@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:file_picker/file_picker.dart';
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 class IncidentReportScreen extends StatefulWidget {
   const IncidentReportScreen({super.key});
@@ -30,6 +33,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   List<PlatformFile> _selectedFiles = [];
   final _witnessInfoController = TextEditingController();
   final _additionalNotesController = TextEditingController();
+  bool _isLoading = false;
 
   final List<String> _crimeTypes = [
     'Robbery',
@@ -103,6 +107,101 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     );
     if (result != null) {
       setState(() => _selectedFiles = result.files);
+    }
+  }
+
+  Future<void> _submitReport() async {
+    // 1. Validation Check
+    if (_selectedIncidentType == null || _descriptionController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text("Please provide incident type and description"),
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final supabase = Supabase.instance.client;
+      final user = supabase.auth.currentUser;
+      if (user == null) return;
+
+      List<String> uploadedUrls = [];
+
+      // 2. UPLOAD FILES TO STORAGE
+      for (var file in _selectedFiles) {
+        final String fileName =
+            '${DateTime.now().millisecondsSinceEpoch}_${file.name}';
+        final String path = 'evidence/${user.id}/$fileName';
+
+        if (kIsWeb) {
+          // Web uses bytes
+          await supabase.storage
+              .from('incident-evidence')
+              .uploadBinary(
+                path,
+                file.bytes!,
+                fileOptions: FileOptions(
+                  contentType: file.extension != null
+                      ? 'image/${file.extension}'
+                      : 'image/jpeg',
+                ),
+              );
+        } else {
+          // Mobile uses file path
+          await supabase.storage
+              .from('incident-evidence')
+              .upload(path, File(file.path!));
+        }
+
+        // Get the Public URL for the admin to view later
+        final String publicUrl = supabase.storage
+            .from('incident-evidence')
+            .getPublicUrl(path);
+        uploadedUrls.add(publicUrl);
+      }
+
+      // 3. SAVE DATA TO 'incidents' TABLE
+      await supabase.from('incidents').insert({
+        'user_id': user.id,
+        'incident_type': _selectedIncidentType,
+        'description': _descriptionController.text.trim(),
+        'incident_date': _selectedDate?.toIso8601String(),
+        'incident_time': _selectedTime?.format(context),
+        'latitude': _capturedPosition?.latitude,
+        'longitude': _capturedPosition?.longitude.toString(),
+        'location_address':
+            'GPS Captured', // We will improve this with Geocoding later
+        'evidence_urls': uploadedUrls,
+        'status': 'pending',
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              "Report submitted successfully! The AI Agent is triaging your case.",
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+        // Go back to the User Dashboard
+        Navigator.pop(context);
+      }
+    } catch (e) {
+      debugPrint("SUBMISSION ERROR: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Submission failed: $e"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -388,11 +487,10 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     );
   }
 
-  // --- STEP 3: Evidence & Review (Matches Image 2 & 3) ---
   Widget _buildStep3() {
     return Column(
       children: [
-        // Evidence Box
+        // 1. Evidence Upload Box
         Card(
           elevation: 2,
           shape: RoundedRectangleBorder(
@@ -404,11 +502,15 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
               children: [
                 const Text(
                   "Upload Evidence",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF003366),
+                  ),
                 ),
                 const SizedBox(height: 20),
                 InkWell(
-                  onTap: _pickFiles,
+                  onTap: _isLoading ? null : _pickFiles,
                   child: Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(30),
@@ -418,23 +520,34 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                         style: BorderStyle.solid,
                       ),
                       borderRadius: BorderRadius.circular(12),
+                      color: _isLoading ? Colors.grey.shade50 : Colors.white,
                     ),
                     child: Column(
                       children: [
-                        const CircleAvatar(
+                        CircleAvatar(
                           radius: 30,
-                          backgroundColor: Color(0xFF003366),
-                          child: Icon(
-                            Icons.cloud_upload,
-                            color: Colors.white,
-                            size: 30,
-                          ),
+                          backgroundColor: const Color(0xFF003366),
+                          child: _isLoading
+                              ? const SizedBox(
+                                  width: 20,
+                                  height: 20,
+                                  child: CircularProgressIndicator(
+                                    color: Colors.white,
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(
+                                  Icons.cloud_upload,
+                                  color: Colors.white,
+                                  size: 30,
+                                ),
                         ),
                         const SizedBox(height: 15),
                         const Text(
                           "Tap to upload photos, videos, or audio",
                           style: TextStyle(fontWeight: FontWeight.bold),
                         ),
+                        const SizedBox(height: 4),
                         Text(
                           "${_selectedFiles.length} files selected",
                           style: const TextStyle(
@@ -450,8 +563,10 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
             ),
           ),
         ),
+
         const SizedBox(height: 15),
-        // Review Section
+
+        // 2. Review and Submission Section
         Card(
           elevation: 2,
           shape: RoundedRectangleBorder(
@@ -484,34 +599,61 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                       ? "Not specified"
                       : "${DateFormat('d/M/yyyy').format(_selectedDate!)} ${_selectedTime?.format(context) ?? ''}",
                 ),
+
                 const SizedBox(height: 25),
+
+                // SAVE AS DRAFT (Visual only for now)
                 OutlinedButton(
-                  onPressed: () {},
+                  onPressed: _isLoading ? null : () {},
                   style: OutlinedButton.styleFrom(
                     minimumSize: const Size(double.infinity, 50),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(30),
+                    ),
                   ),
                   child: const Text("Save as Draft"),
                 ),
+
                 const SizedBox(height: 12),
+
+                // THE SUBMIT BUTTON
                 ElevatedButton(
-                  onPressed: () {
-                    /* Supabase Insert Logic */
-                  },
+                  onPressed: _isLoading
+                      ? null
+                      : _submitReport, // Correctly linked to the logic
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF003366),
                     minimumSize: const Size(double.infinity, 55),
-                  ),
-                  child: const Text(
-                    "Submit Report",
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
+                    elevation: 3,
                   ),
+                  child: _isLoading
+                      ? const SizedBox(
+                          height: 20,
+                          width: 20,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        )
+                      : const Text(
+                          "Submit Report",
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                          ),
+                        ),
                 ),
+
+                const SizedBox(height: 10),
                 Center(
                   child: TextButton(
-                    onPressed: () => setState(() => _currentStep = 2),
+                    onPressed: _isLoading
+                        ? null
+                        : () => setState(() => _currentStep = 2),
                     child: const Text(
                       "Back",
                       style: TextStyle(color: Colors.grey),
