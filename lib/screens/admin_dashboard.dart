@@ -349,8 +349,13 @@ class _AdminDashboardState extends State<AdminDashboard> {
     final DateTime date = DateTime.parse(
       incident['created_at'] ?? DateTime.now().toIso8601String(),
     );
+
+    // 1. Get raw priority from DB
+    String dbPriority = (incident['priority'] ?? 'Low').toString();
     String type = (incident['incident_type'] ?? 'Other').toString();
-    bool isUrgent = [
+
+    // 2. SMART LOGIC: Ensure serious types always show as Critical
+    bool isUrgentType = [
       'Murder',
       'Accident',
       'Fire outbreak',
@@ -359,30 +364,65 @@ class _AdminDashboardState extends State<AdminDashboard> {
       'Robbery',
     ].contains(type);
 
+    String displayPriority = isUrgentType ? 'Critical' : dbPriority;
+
+    // Define priority colors
+    Color priorityColor = Colors.grey;
+    if (displayPriority == 'Critical') priorityColor = Colors.red.shade900;
+    if (displayPriority == 'High') priorityColor = Colors.red;
+    if (displayPriority == 'Medium') priorityColor = Colors.orange;
+
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 1,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ListTile(
-        onTap: () => Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) => CaseDetailScreen(incident: incident),
-          ),
-        ).then((_) => _loadAllDashboardData()),
+        onTap: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => CaseDetailScreen(incident: incident),
+            ),
+          ).then((_) => _loadAllDashboardData());
+        },
+        // The colored stripe on the left
         leading: Container(
           width: 5,
           height: 40,
           decoration: BoxDecoration(
-            color: isUrgent ? Colors.red : Colors.grey,
+            color: priorityColor,
             borderRadius: BorderRadius.circular(2),
           ),
         ),
-        title: Text(type, style: const TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: Text(
-          "Reported at ${DateFormat('HH:mm').format(date)} • ${incident['village'] ?? 'Unknown'}",
+        title: Row(
+          children: [
+            Text(type, style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(width: 8),
+
+            // --- THE CRITICAL BADGE (FIXED) ---
+            if (displayPriority != 'Low')
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: priorityColor,
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  displayPriority.toUpperCase(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+          ],
         ),
-        trailing: const Icon(Icons.chevron_right),
+        subtitle: Text(
+          "Reported at ${DateFormat('HH:mm').format(date)} • ${incident['village'] ?? 'Unknown Location'}",
+          style: const TextStyle(fontSize: 12),
+        ),
+        trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.grey),
       ),
     );
   }
