@@ -4,7 +4,8 @@ import 'package:intl/intl.dart';
 import 'case_detail_screen.dart';
 
 class AllReportsScreen extends StatefulWidget {
-  const AllReportsScreen({super.key});
+  final String? initialFilter; // Add this
+  const AllReportsScreen({super.key, this.initialFilter});
 
   @override
   State<AllReportsScreen> createState() => _AllReportsScreenState();
@@ -29,15 +30,47 @@ class _AllReportsScreenState extends State<AllReportsScreen> {
           .from('incidents')
           .select()
           .order('created_at', ascending: false);
-      if (mounted) {
-        setState(() {
-          _allReports = List<Map<String, dynamic>>.from(data);
-          _filteredReports = _allReports;
-          _isLoading = false;
-        });
-      }
+      final allList = List<Map<String, dynamic>>.from(data);
+
+      setState(() {
+        _allReports = allList;
+
+        // APPLY INITIAL FILTER
+        if (widget.initialFilter != null) {
+          if (widget.initialFilter == 'active') {
+            _filteredReports = allList
+                .where((i) => i['status'] != 'Resolved')
+                .toList();
+          } else if (widget.initialFilter == 'critical') {
+            _filteredReports = allList
+                .where(
+                  (i) =>
+                      ['Critical', 'High'].contains(i['priority']) ||
+                      [
+                        'Murder',
+                        'Manslaughter',
+                        'Accident',
+                      ].contains(i['incident_type']),
+                )
+                .toList();
+          } else if (widget.initialFilter == 'today') {
+            final today = DateTime.now().toIso8601String().substring(0, 10);
+            _filteredReports = allList
+                .where((i) => i['created_at'].toString().startsWith(today))
+                .toList();
+          } else if (widget.initialFilter == 'responded') {
+            _filteredReports = allList
+                .where((i) => i['status'] != 'Pending')
+                .toList();
+          }
+        } else {
+          _filteredReports = allList;
+        }
+
+        _isLoading = false;
+      });
     } catch (e) {
-      debugPrint("Error fetching all reports: $e");
+      debugPrint("Error: $e");
       if (mounted) setState(() => _isLoading = false);
     }
   }

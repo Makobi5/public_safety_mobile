@@ -379,6 +379,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
       'Accident',
       'Fire outbreak',
       'Kidnap',
+      'Manslaughter',
       'Robbery',
     ].contains(type);
     String displayPriority = isUrgentType ? 'Critical' : dbPriority;
@@ -664,40 +665,48 @@ class _AdminStatCard extends StatelessWidget {
   final String label;
   final String value;
   final Color color;
+  final VoidCallback? onTap; // 1. Added onTap
+
   const _AdminStatCard({
     required this.label,
     required this.value,
     required this.color,
+    this.onTap, // 2. Add to constructor
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: const TextStyle(color: Colors.black54, fontSize: 13),
-          ),
-          const Spacer(),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.bold,
-              color: color,
+    return InkWell(
+      // 3. Wrap with InkWell for click effect
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(color: Colors.black54, fontSize: 13),
             ),
-          ),
-        ],
+            const Spacer(),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 26,
+                fontWeight: FontWeight.bold,
+                color: color,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
