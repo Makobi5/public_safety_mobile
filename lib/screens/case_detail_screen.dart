@@ -40,28 +40,52 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
     );
   }
 
-  // and update the _updateStatus function to send the exact string
   Future<void> _updateStatus(String newStatus) async {
     setState(() => _isUpdating = true);
-    try {
-      await supabase
-          .from('incidents')
-          .update({'status': newStatus}) // Sends 'Pending', 'Resolved', etc.
-          .eq('id', widget.incident['id']);
 
-      setState(() => _currentStatus = newStatus);
+    try {
+      // 1. Attempt to update the database
+      final response = await supabase
+          .from('incidents')
+          .update({'status': newStatus})
+          .eq('id', widget.incident['id'])
+          .select(); // Requesting data back to verify success
+
+      if (response.isEmpty) {
+        throw "Update failed: No rows affected. Check RLS policies.";
+      }
+
+      // 2. If successful, update the local UI state
+      setState(() {
+        _currentStatus = newStatus;
+      });
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text("Status updated to $newStatus"),
+            content: Text("Success: Status updated to $newStatus"),
             backgroundColor: Colors.green.shade800,
             behavior: SnackBarBehavior.floating,
           ),
         );
       }
     } catch (e) {
-      debugPrint("Update error: $e");
+      debugPrint("DATABASE UPDATE ERROR: $e");
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Error: Permission denied or connection lost."),
+            backgroundColor: Colors.red.shade800,
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+
+      // Revert the dropdown value if it failed
+      setState(() {
+        _currentStatus = widget.incident['status'];
+      });
     } finally {
       if (mounted) setState(() => _isUpdating = false);
     }
