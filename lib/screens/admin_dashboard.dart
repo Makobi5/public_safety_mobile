@@ -18,15 +18,21 @@ class AdminDashboard extends StatefulWidget {
 class _AdminDashboardState extends State<AdminDashboard> {
   final supabase = Supabase.instance.client;
 
-  String _adminName = "Loading...";
-  String _adminRole = "Admin";
+  // Admin Info - Initialized with defaults to prevent crashes
+  String _adminName = "Administrator";
+  String _adminRole = "Personnel";
+
+  // Statistics
   int _totalIncidentsCount = 0;
   int _activeCases = 0;
+  int _pendingCount = 0;
   int _criticalCases = 0;
   int _newReportsToday = 0;
   String _responseRate = "0%";
   String _emergencyLevel = "Low";
 
+  // UI State
+  String _activeFilter = "All";
   List<Map<String, dynamic>> _recentIncidents = [];
   bool _isLoading = true;
 
@@ -36,16 +42,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
     _loadAllDashboardData();
   }
 
-  // --- NAVIGATION HELPER ---
-  void _navigateToFilteredReports(String filter) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (context) => AllReportsScreen(initialFilter: filter),
-      ),
-    ).then((_) => _loadAllDashboardData());
-  }
-
+  // Logic to fetch user profile and all incident statistics
   Future<void> _loadAllDashboardData() async {
     if (!mounted) return;
     setState(() => _isLoading = true);
@@ -54,16 +51,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
       final user = supabase.auth.currentUser;
       if (user == null) return;
 
+      // 1. Fetch Profile Data (Null-safe)
       final profileData = await supabase
           .from('user_profiles')
           .select()
           .eq('user_id', user.id)
-          .single();
+          .maybeSingle();
 
+      // 2. Fetch ALL Incidents for Calculation
       final incidentData = await supabase
           .from('incidents')
           .select()
           .order('created_at', ascending: false);
+
       final List<Map<String, dynamic>> allIncidents =
           List<Map<String, dynamic>>.from(incidentData);
 
@@ -71,34 +71,48 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
       if (mounted) {
         setState(() {
+          // Profile extraction
           _adminName =
-              "${profileData['first_name'] ?? 'Admin'} ${profileData['last_name'] ?? ''}";
-          _adminRole = profileData['role'] == 'super_admin'
+              "${profileData?['first_name'] ?? 'Admin'} ${profileData?['last_name'] ?? ''}";
+          _adminRole = profileData?['role'] == 'super_admin'
               ? "Super Admin"
               : "Station Admin";
+
+          // List and Count management
           _totalIncidentsCount = allIncidents.length;
           _recentIncidents = allIncidents.take(5).toList();
+
+          // Status and Priority Calculations
           _activeCases = allIncidents
-              .where((i) => i['status'] != 'Resolved')
+              .where((i) => (i['status'] ?? '').toLowerCase() != 'resolved')
               .length;
-          _criticalCases = allIncidents
+
+          _pendingCount = allIncidents
               .where(
-                (i) => [
-                  'Accident',
-                  'Murder',
-                  'Fire outbreak',
-                  'Robbery',
-                  'Kidnap',
-                  'Manslaughter',
-                ].contains(i['incident_type']),
+                (i) => (i['status'] ?? 'Pending').toLowerCase() == 'pending',
               )
               .length;
+
+          _criticalCases = allIncidents.where((i) {
+            String type = (i['incident_type'] ?? '').toString();
+            String priority = (i['priority'] ?? '').toString();
+            return [
+                  'Murder',
+                  'Manslaughter',
+                  'Accident',
+                  'Fire outbreak',
+                  'Kidnap',
+                ].contains(type) ||
+                priority == 'Critical';
+          }).length;
+
           _newReportsToday = allIncidents
               .where(
                 (i) => (i['created_at'] ?? '').toString().startsWith(today),
               )
               .length;
 
+          // Response Rate Logic
           if (allIncidents.isNotEmpty) {
             int responded = allIncidents
                 .where(
@@ -108,21 +122,26 @@ class _AdminDashboardState extends State<AdminDashboard> {
             _responseRate =
                 "${((responded / allIncidents.length) * 100).toInt()}%";
           }
-          _emergencyLevel = _criticalCases > 3
-              ? "High"
-              : _criticalCases > 0
-              ? "Medium"
-              : "Low";
+
+          // Dynamic Emergency Level Banner logic
+          if (_criticalCases > 3) {
+            _emergencyLevel = "High";
+          } else if (_criticalCases > 0) {
+            _emergencyLevel = "Medium";
+          } else {
+            _emergencyLevel = "Low";
+          }
+
           _isLoading = false;
         });
       }
     } catch (e) {
-      debugPrint("Admin Dashboard Error: $e");
+      debugPrint("Admin Dashboard Fetch Error: $e");
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  Future<void> _handleLogout(BuildContext context) async {
+  void _handleLogout() async {
     await supabase.auth.signOut();
     if (mounted) {
       Navigator.of(context).pushAndRemoveUntil(
@@ -132,11 +151,40 @@ class _AdminDashboardState extends State<AdminDashboard> {
     }
   }
 
+  // Navigation with Filter Logic for Stat Cards
+  void _navigateToFilteredReports(String filter) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => AllReportsScreen(initialFilter: filter),
+      ),
+    ).then((_) => _loadAllDashboardData());
+  }
+
   @override
   Widget build(BuildContext context) {
+    // Local list filtering based on UI toggle (All/Pending/Critical)
+    List<Map<String, dynamic>> displayedIncidents = _recentIncidents;
+    if (_activeFilter == "Pending") {
+      displayedIncidents = _recentIncidents
+          .where((i) => (i['status'] ?? 'Pending').toLowerCase() == 'pending')
+          .toList();
+    } else if (_activeFilter == "Critical") {
+      displayedIncidents = _recentIncidents.where((i) {
+        String type = (i['incident_type'] ?? '').toString();
+        return [
+          'Murder',
+          'Manslaughter',
+          'Accident',
+          'Fire outbreak',
+          'Kidnap',
+        ].contains(type);
+      }).toList();
+    }
+
     return Scaffold(
       backgroundColor: const Color(0xFFF4F7F9),
-      drawer: _buildDrawer(context),
+      drawer: _buildDrawer(),
       appBar: AppBar(
         backgroundColor: const Color(0xFF003366),
         foregroundColor: Colors.white,
@@ -177,7 +225,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                   const SizedBox(height: 16),
 
-                  // --- UPDATED STAT GRID ---
+                  // 1. STAT GRID (Clickable Cards)
                   GridView.count(
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
@@ -190,35 +238,31 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         label: "Active Cases",
                         value: _activeCases.toString(),
                         color: const Color(0xFF003366),
-                        onTap: () =>
-                            _navigateToFilteredReports('active'), // Added
+                        onTap: () => setState(() => _activeFilter = "All"),
+                      ),
+                      _AdminStatCard(
+                        label: "Pending Action",
+                        value: _pendingCount.toString(),
+                        color: Colors.orange.shade800,
+                        onTap: () => setState(() => _activeFilter = "Pending"),
                       ),
                       _AdminStatCard(
                         label: "Critical Cases",
                         value: _criticalCases.toString(),
                         color: Colors.red,
-                        onTap: () =>
-                            _navigateToFilteredReports('critical'), // Added
-                      ),
-                      _AdminStatCard(
-                        label: "New Reports Today",
-                        value: _newReportsToday.toString(),
-                        color: const Color(0xFF003366),
-                        onTap: () =>
-                            _navigateToFilteredReports('today'), // Added
+                        onTap: () => setState(() => _activeFilter = "Critical"),
                       ),
                       _AdminStatCard(
                         label: "Response Rate",
                         value: _responseRate,
                         color: Colors.teal,
-                        onTap: () =>
-                            _navigateToFilteredReports('responded'), // Added
                       ),
                     ],
                   ),
-                  const SizedBox(height: 24),
 
-                  // Recent Reports Section
+                  const SizedBox(height: 30),
+
+                  // 2. RECENT REPORTS HEADER + FILTERS
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -230,32 +274,34 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           color: Color(0xFF003366),
                         ),
                       ),
-                      if (_totalIncidentsCount > 5)
-                        Text(
-                          "Showing 5 of $_totalIncidentsCount",
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
+                      Row(
+                        children: [
+                          _buildFilterChip("All"),
+                          const SizedBox(width: 6),
+                          _buildFilterChip("Pending"),
+                          const SizedBox(width: 6),
+                          _buildFilterChip("Critical"),
+                        ],
+                      ),
                     ],
                   ),
                   const SizedBox(height: 12),
-                  if (_recentIncidents.isEmpty)
-                    const Center(
+
+                  // 3. THE DYNAMIC LIST
+                  if (displayedIncidents.isEmpty)
+                    Center(
                       child: Padding(
-                        padding: EdgeInsets.all(40.0),
+                        padding: const EdgeInsets.all(40.0),
                         child: Text(
-                          "No incidents reported yet.",
-                          style: TextStyle(color: Colors.grey),
+                          "No $_activeFilter reports found.",
+                          style: const TextStyle(color: Colors.grey),
                         ),
                       ),
                     )
                   else
                     Column(
                       children: [
-                        ..._recentIncidents
+                        ...displayedIncidents
                             .map(
                               (incident) => _buildRecentIncidentItem(incident),
                             )
@@ -278,7 +324,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
                                 icon: const Icon(
                                   Icons.list_alt_rounded,
                                   color: Color(0xFF003366),
-                                  size: 20,
                                 ),
                                 label: const Text(
                                   "VIEW ALL REPORTS",
@@ -292,17 +337,19 @@ class _AdminDashboardState extends State<AdminDashboard> {
                           ),
                       ],
                     ),
+
                   const SizedBox(height: 24),
                   _buildMapPlaceholder(),
                   const SizedBox(height: 80),
                 ],
               ),
             ),
-      floatingActionButton: _buildFABs(context),
+      floatingActionButton: _buildFABs(),
     );
   }
 
-  // Sub-widgets
+  // --- SUB-WIDGET BUILDERS ---
+
   Widget _buildEmergencyBanner() {
     Color bannerColor = _emergencyLevel == "High"
         ? Colors.red.shade800
@@ -345,73 +392,110 @@ class _AdminDashboardState extends State<AdminDashboard> {
     );
   }
 
-  Widget _buildRecentIncidentItem(Map<String, dynamic> incident) {
-    final DateTime date = DateTime.parse(
-      incident['created_at'] ?? DateTime.now().toIso8601String(),
+  Widget _buildFilterChip(String label) {
+    bool isSelected = _activeFilter == label;
+    return GestureDetector(
+      onTap: () => setState(() => _activeFilter = label),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: isSelected ? const Color(0xFF003366) : Colors.white,
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(
+            color: isSelected ? const Color(0xFF003366) : Colors.grey.shade300,
+          ),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.black54,
+            fontSize: 10,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
     );
+  }
 
-    // 1. Get raw priority from DB
-    String dbPriority = (incident['priority'] ?? 'Low').toString();
+  Widget _buildRecentIncidentItem(Map<String, dynamic> incident) {
+    DateTime date;
+    try {
+      date = DateTime.parse(
+        incident['created_at'] ?? DateTime.now().toIso8601String(),
+      );
+    } catch (e) {
+      date = DateTime.now();
+    }
+
     String type = (incident['incident_type'] ?? 'Other').toString();
-
-    // 2. SMART LOGIC: Ensure serious types always show as Critical
+    bool isUnattended =
+        (incident['status'] ?? 'Pending').toLowerCase() == 'pending';
     bool isUrgentType = [
       'Murder',
+      'Manslaughter',
       'Accident',
       'Fire outbreak',
       'Kidnap',
-      'Manslaughter',
       'Robbery',
     ].contains(type);
-
+    String dbPriority = (incident['priority'] ?? 'Low').toString();
     String displayPriority = isUrgentType ? 'Critical' : dbPriority;
 
-    // Define priority colors
     Color priorityColor = Colors.grey;
-    if (displayPriority == 'Critical') priorityColor = Colors.red.shade900;
-    if (displayPriority == 'High') priorityColor = Colors.red;
-    if (displayPriority == 'Medium') priorityColor = Colors.orange;
+    if (displayPriority == 'Critical')
+      priorityColor = Colors.red.shade900;
+    else if (displayPriority == 'High')
+      priorityColor = Colors.red;
+    else if (displayPriority == 'Medium')
+      priorityColor = Colors.orange;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 1,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ListTile(
-        onTap: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => CaseDetailScreen(incident: incident),
-            ),
-          ).then((_) => _loadAllDashboardData());
-        },
-        // The colored stripe on the left
-        leading: Container(
-          width: 5,
-          height: 40,
-          decoration: BoxDecoration(
-            color: priorityColor,
-            borderRadius: BorderRadius.circular(2),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => CaseDetailScreen(incident: incident),
           ),
+        ).then((_) => _loadAllDashboardData()),
+        leading: Stack(
+          alignment: Alignment.topRight,
+          children: [
+            Container(
+              width: 5,
+              height: 40,
+              decoration: BoxDecoration(
+                color: priorityColor,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            if (isUnattended)
+              const CircleAvatar(radius: 4, backgroundColor: Colors.orange),
+          ],
         ),
         title: Row(
           children: [
-            Text(type, style: const TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(width: 8),
-
-            // --- THE CRITICAL BADGE (FIXED) ---
+            Expanded(
+              child: Text(
+                type,
+                style: const TextStyle(fontWeight: FontWeight.bold),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
             if (displayPriority != 'Low')
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: priorityColor,
-                  borderRadius: BorderRadius.circular(6),
+                  borderRadius: BorderRadius.circular(4),
                 ),
                 child: Text(
                   displayPriority.toUpperCase(),
                   style: const TextStyle(
                     color: Colors.white,
-                    fontSize: 9,
+                    fontSize: 8,
                     fontWeight: FontWeight.bold,
                   ),
                 ),
@@ -419,73 +503,14 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ],
         ),
         subtitle: Text(
-          "Reported at ${DateFormat('HH:mm').format(date)} • ${incident['village'] ?? 'Unknown Location'}",
-          style: const TextStyle(fontSize: 12),
+          "${DateFormat('HH:mm').format(date)} • ${incident['village'] ?? 'Unknown Location'}",
         ),
         trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.grey),
       ),
     );
   }
 
-  Widget _buildMapPlaceholder() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(15),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10),
-        ],
-      ),
-      child: const Column(
-        children: [
-          Text(
-            "District Activity Map",
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-          ),
-          SizedBox(height: 40),
-          Icon(Icons.map_outlined, size: 60, color: Colors.grey),
-          Text(
-            "Interactive District Map",
-            style: TextStyle(color: Colors.grey),
-          ),
-          SizedBox(height: 40),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFABs(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.end,
-      children: [
-        FloatingActionButton(
-          heroTag: "u_m",
-          backgroundColor: Colors.blue,
-          onPressed: () => Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => const UserManagementScreen(),
-            ),
-          ).then((_) => _loadAllDashboardData()),
-          child: const Icon(Icons.people, color: Colors.white),
-        ),
-        const SizedBox(width: 16),
-        FloatingActionButton(
-          heroTag: "a_a",
-          backgroundColor: const Color(0xFF003366),
-          onPressed: () => Navigator.push(
-            context,
-            MaterialPageRoute(builder: (context) => const AddAdminScreen()),
-          ).then((_) => _loadAllDashboardData()),
-          child: const Icon(Icons.person_add, color: Colors.white),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDrawer(BuildContext context) {
+  Widget _buildDrawer() {
     return Drawer(
       child: Column(
         children: [
@@ -588,7 +613,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
             icon: Icons.logout_rounded,
             label: "Logout",
             color: Colors.red,
-            onTap: () => _handleLogout(context),
+            onTap: _handleLogout,
           ),
           const SizedBox(height: 20),
         ],
@@ -619,6 +644,64 @@ class _AdminDashboardState extends State<AdminDashboard> {
       selected: isSelected,
       selectedTileColor: const Color(0xFFE3F2FD),
       onTap: onTap,
+    );
+  }
+
+  Widget _buildFABs() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.end,
+      children: [
+        FloatingActionButton(
+          heroTag: "u_m",
+          backgroundColor: Colors.blue,
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) => const UserManagementScreen(),
+            ),
+          ).then((_) => _loadAllDashboardData()),
+          child: const Icon(Icons.people, color: Colors.white),
+        ),
+        const SizedBox(width: 16),
+        FloatingActionButton(
+          heroTag: "a_a",
+          backgroundColor: const Color(0xFF003366),
+          onPressed: () => Navigator.push(
+            context,
+            MaterialPageRoute(builder: (context) => const AddAdminScreen()),
+          ).then((_) => _loadAllDashboardData()),
+          child: const Icon(Icons.person_add, color: Colors.white),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildMapPlaceholder() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(15),
+        boxShadow: [
+          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10),
+        ],
+      ),
+      child: const Column(
+        children: [
+          Text(
+            "District Activity Map",
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+          ),
+          SizedBox(height: 40),
+          Icon(Icons.map_outlined, size: 60, color: Colors.grey),
+          Text(
+            "Interactive District Map",
+            style: TextStyle(color: Colors.grey),
+          ),
+          SizedBox(height: 40),
+        ],
+      ),
     );
   }
 }
