@@ -6,6 +6,7 @@ import 'welcome_screen.dart';
 import 'user_management_screen.dart';
 import 'add_admin_screen.dart';
 import 'case_detail_screen.dart';
+import 'all_reports_screen.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -20,6 +21,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   // Admin Info
   String _adminName = "Loading...";
   String _adminRole = "Admin";
+  int _totalIncidentsCount = 0;
 
   // Statistics
   int _activeCases = 0;
@@ -53,32 +55,35 @@ class _AdminDashboardState extends State<AdminDashboard> {
           .eq('user_id', user.id)
           .single();
 
-      // 2. Fetch ALL Incidents for Stats
+      // 2. Fetch ALL Incidents (Only do this ONCE)
       final incidentData = await supabase
           .from('incidents')
           .select()
           .order('created_at', ascending: false);
+
       final List<Map<String, dynamic>> allIncidents =
           List<Map<String, dynamic>>.from(incidentData);
 
-      // 3. Process Stats
+      // 3. Process Stats and Lists
       final today = DateTime.now().toIso8601String().substring(0, 10);
 
       if (mounted) {
         setState(() {
           _adminName =
-              "${profileData['first_name']} ${profileData['last_name']}";
+              "${profileData['first_name'] ?? 'Admin'} ${profileData['last_name'] ?? ''}";
           _adminRole = profileData['role'] == 'super_admin'
               ? "Super Admin"
               : "Station Admin";
 
-          _recentIncidents = allIncidents.take(5).toList(); // Show top 5 latest
+          _totalIncidentsCount = allIncidents.length;
+          _recentIncidents = allIncidents
+              .take(5)
+              .toList(); // Dashboard only gets top 5
 
           _activeCases = allIncidents
-              .where((i) => i['status'] != 'resolved')
+              .where((i) => i['status'] != 'Resolved')
               .length;
 
-          // Logic for Critical: Accidents, Murder, Fire, etc.
           _criticalCases = allIncidents
               .where(
                 (i) => [
@@ -92,22 +97,25 @@ class _AdminDashboardState extends State<AdminDashboard> {
               .length;
 
           _newReportsToday = allIncidents
-              .where((i) => i['created_at'].toString().startsWith(today))
+              .where(
+                (i) => (i['created_at'] ?? '').toString().startsWith(today),
+              )
               .length;
 
-          // Response Rate: Percentage of cases that are NOT 'pending'
           if (allIncidents.isNotEmpty) {
             int responded = allIncidents
-                .where((i) => i['status'] != 'pending')
+                .where(
+                  (i) => (i['status'] ?? 'Pending').toLowerCase() != 'pending',
+                )
                 .length;
             _responseRate =
                 "${((responded / allIncidents.length) * 100).toInt()}%";
           }
 
-          // Emergency Level Logic
-          if (_criticalCases > 5 || _newReportsToday > 10) {
+          // Dynamic Emergency Level
+          if (_criticalCases > 3) {
             _emergencyLevel = "High";
-          } else if (_criticalCases > 2) {
+          } else if (_criticalCases > 0) {
             _emergencyLevel = "Medium";
           } else {
             _emergencyLevel = "Low";
@@ -157,7 +165,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
         ],
       ),
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(
+              child: CircularProgressIndicator(color: Color(0xFF003366)),
+            )
           : SingleChildScrollView(
               padding: const EdgeInsets.all(16),
               child: Column(
@@ -211,33 +221,96 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
                   const SizedBox(height: 24),
 
-                  // 3. Recent Reports Section (The new part)
-                  const Text(
-                    "Recent Reports",
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF003366),
-                    ),
+                  // 3. RECENT REPORTS SECTION (Updated with View More logic)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        "Recent Reports",
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Color(0xFF003366),
+                        ),
+                      ),
+                      // Sub-indicator showing count
+                      if (_totalIncidentsCount > 5)
+                        Text(
+                          "Showing 5 of $_totalIncidentsCount",
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                    ],
                   ),
                   const SizedBox(height: 12),
+
                   if (_recentIncidents.isEmpty)
                     const Center(
                       child: Padding(
-                        padding: EdgeInsets.all(20.0),
-                        child: Text("No incidents reported yet."),
+                        padding: EdgeInsets.all(40.0),
+                        child: Text(
+                          "No incidents reported yet.",
+                          style: TextStyle(color: Colors.grey),
+                        ),
                       ),
                     )
                   else
-                    ..._recentIncidents
-                        .map((incident) => _buildRecentIncidentItem(incident))
-                        .toList(),
+                    Column(
+                      children: [
+                        // Display the top 5 (or less if there are fewer)
+                        ..._recentIncidents
+                            .map(
+                              (incident) => _buildRecentIncidentItem(incident),
+                            )
+                            .toList(),
+
+                        // THE "VIEW ALL" BUTTON - only appears if there are more than 5 reports
+                        if (_totalIncidentsCount > 5)
+                          Padding(
+                            padding: const EdgeInsets.only(
+                              top: 8.0,
+                              bottom: 10.0,
+                            ),
+                            child: Center(
+                              child: TextButton.icon(
+                                onPressed: () {
+                                  Navigator.push(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (context) =>
+                                          const AllReportsScreen(),
+                                    ),
+                                  ).then((_) => _loadAllDashboardData());
+                                },
+                                icon: const Icon(
+                                  Icons.list_alt_rounded,
+                                  color: Color(0xFF003366),
+                                  size: 20,
+                                ),
+                                label: const Text(
+                                  "VIEW ALL REPORTS",
+                                  style: TextStyle(
+                                    color: Color(0xFF003366),
+                                    fontWeight: FontWeight.bold,
+                                    letterSpacing: 1.0,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
 
                   const SizedBox(height: 24),
 
                   // 4. District Map Placeholder
                   _buildMapPlaceholder(),
-                  const SizedBox(height: 80), // Space for FAB
+                  const SizedBox(
+                    height: 80,
+                  ), // Extra padding for the bottom FABs
                 ],
               ),
             ),
