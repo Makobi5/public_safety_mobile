@@ -294,37 +294,45 @@ class _AdminDashboardState extends State<AdminDashboard> {
     final DateTime date = DateTime.parse(
       incident['created_at'] ?? DateTime.now().toIso8601String(),
     );
-    final String priority = incident['priority'] ?? 'Low';
 
-    // Priority Colors
+    // 1. Get raw priority from DB
+    String dbPriority = (incident['priority'] ?? 'Low').toString();
+    String type = (incident['incident_type'] ?? 'Other').toString();
+
+    // 2. SMART LOGIC: If it's a dangerous type, force it to show as Critical in the UI
+    // This ensures the flag shows even if the background AI agent is still processing
+    bool isUrgentType = [
+      'Murder',
+      'Accident',
+      'Fire outbreak',
+      'Kidnap',
+      'Robbery',
+    ].contains(type);
+    String displayPriority = isUrgentType ? 'Critical' : dbPriority;
+
+    // Define priority colors
     Color priorityColor = Colors.grey;
-    if (priority == 'Critical') priorityColor = Colors.red.shade900;
-    if (priority == 'High') priorityColor = Colors.red;
-    if (priority == 'Medium') priorityColor = Colors.orange;
+    if (displayPriority == 'Critical') priorityColor = Colors.red.shade900;
+    if (displayPriority == 'High') priorityColor = Colors.red;
+    if (displayPriority == 'Medium') priorityColor = Colors.orange;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
       elevation: 1,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ListTile(
-        // --- THIS IS THE CRITICAL FIX ---
         onTap: () {
-          debugPrint(
-            "Tapped on incident ID: ${incident['id']}",
-          ); // Check your terminal
           Navigator.push(
             context,
             MaterialPageRoute(
               builder: (context) => CaseDetailScreen(incident: incident),
             ),
-          ).then(
-            (_) => _loadAllDashboardData(),
-          ); // Refresh stats when you come back
+          ).then((_) => _loadAllDashboardData());
         },
-        // --------------------------------
+        // The colored stripe on the left
         leading: Container(
-          width: 4,
-          height: 30,
+          width: 5,
+          height: 40,
           decoration: BoxDecoration(
             color: priorityColor,
             borderRadius: BorderRadius.circular(2),
@@ -332,20 +340,18 @@ class _AdminDashboardState extends State<AdminDashboard> {
         ),
         title: Row(
           children: [
-            Text(
-              incident['incident_type'] ?? "Other",
-              style: const TextStyle(fontWeight: FontWeight.bold),
-            ),
+            Text(type, style: const TextStyle(fontWeight: FontWeight.bold)),
             const SizedBox(width: 8),
-            if (priority != 'Low')
+            // 3. SHOW THE BADGE BASED ON OUR SMART LOGIC
+            if (displayPriority != 'Low')
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
                   color: priorityColor,
-                  borderRadius: BorderRadius.circular(4),
+                  borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
-                  priority.toUpperCase(),
+                  displayPriority.toUpperCase(),
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 9,
