@@ -291,18 +291,27 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Widget _buildRecentIncidentItem(Map<String, dynamic> incident) {
-    final DateTime date = DateTime.parse(incident['created_at']);
-    bool isCritical = [
-      'Accident',
-      'Murder',
-      'Fire outbreak',
-    ].contains(incident['incident_type']);
+    final DateTime date = DateTime.parse(
+      incident['created_at'] ?? DateTime.now().toIso8601String(),
+    );
+    final String priority = incident['priority'] ?? 'Low';
+
+    // Priority Colors
+    Color priorityColor = Colors.grey;
+    if (priority == 'Critical') priorityColor = Colors.red.shade900;
+    if (priority == 'High') priorityColor = Colors.red;
+    if (priority == 'Medium') priorityColor = Colors.orange;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
+      elevation: 1,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: ListTile(
+        // --- THIS IS THE CRITICAL FIX ---
         onTap: () {
+          debugPrint(
+            "Tapped on incident ID: ${incident['id']}",
+          ); // Check your terminal
           Navigator.push(
             context,
             MaterialPageRoute(
@@ -310,26 +319,47 @@ class _AdminDashboardState extends State<AdminDashboard> {
             ),
           ).then(
             (_) => _loadAllDashboardData(),
-          ); // Refresh dashboard numbers when coming back
+          ); // Refresh stats when you come back
         },
-        leading: CircleAvatar(
-          backgroundColor: isCritical
-              ? Colors.red.shade50
-              : const Color(0xFF003366).withOpacity(0.1),
-          child: Icon(
-            Icons.report_problem_rounded,
-            color: isCritical ? Colors.red : const Color(0xFF003366),
+        // --------------------------------
+        leading: Container(
+          width: 4,
+          height: 30,
+          decoration: BoxDecoration(
+            color: priorityColor,
+            borderRadius: BorderRadius.circular(2),
           ),
         ),
-        title: Text(
-          incident['incident_type'] ?? "Other",
-          style: const TextStyle(fontWeight: FontWeight.bold),
+        title: Row(
+          children: [
+            Text(
+              incident['incident_type'] ?? "Other",
+              style: const TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(width: 8),
+            if (priority != 'Low')
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: priorityColor,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  priority.toUpperCase(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 9,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+          ],
         ),
         subtitle: Text(
           "Reported at ${DateFormat('HH:mm').format(date)} • ${incident['village'] ?? 'Unknown Location'}",
           style: const TextStyle(fontSize: 12),
         ),
-        trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+        trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.grey),
       ),
     );
   }

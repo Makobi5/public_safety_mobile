@@ -110,6 +110,7 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
           children: [
             // 1. HEADER CARD (Type & Status)
             Card(
+              elevation: 2,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(15),
               ),
@@ -164,6 +165,7 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
             ),
             const SizedBox(height: 10),
             Card(
+              elevation: 2,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(15),
               ),
@@ -181,6 +183,7 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
                       value: _currentStatus,
                       decoration: const InputDecoration(
                         border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12),
                       ),
                       items: _statusOptions
                           .map(
@@ -200,7 +203,13 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
                           ? null
                           : (val) => _updateStatus(val!),
                     ),
-                    if (_isUpdating) const LinearProgressIndicator(),
+                    if (_isUpdating)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 10),
+                        child: LinearProgressIndicator(
+                          color: Color(0xFF003366),
+                        ),
+                      ),
                   ],
                 ),
               ),
@@ -224,15 +233,22 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: Colors.grey.shade200),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.02),
+                    blurRadius: 5,
+                  ),
+                ],
               ),
               child: Text(
                 widget.incident['description'] ?? "No details provided.",
+                style: const TextStyle(fontSize: 15, height: 1.4),
               ),
             ),
 
             const SizedBox(height: 25),
 
-            // 4. EVIDENCE GALLERY
+            // 4. EVIDENCE GALLERY (With Step 4: Zoom Functionality)
             const Text(
               "Evidence Attached",
               style: TextStyle(
@@ -242,11 +258,16 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
             ),
             const SizedBox(height: 10),
             if (evidence.isEmpty)
-              const Text(
-                "No files attached.",
-                style: TextStyle(
-                  color: Colors.grey,
-                  fontStyle: FontStyle.italic,
+              const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(20.0),
+                  child: Text(
+                    "No files attached.",
+                    style: TextStyle(
+                      color: Colors.grey,
+                      fontStyle: FontStyle.italic,
+                    ),
+                  ),
                 ),
               )
             else
@@ -255,26 +276,75 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
                 physics: const NeverScrollableScrollPhysics(),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
-                  crossAxisSpacing: 10,
-                  mainAxisSpacing: 10,
+                  crossAxisSpacing: 12,
+                  mainAxisSpacing: 12,
                 ),
                 itemCount: evidence.length,
                 itemBuilder: (context, index) {
-                  return ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.network(
-                      evidence[index],
-                      fit: BoxFit.cover,
-                      errorBuilder: (context, error, stack) => Container(
-                        color: Colors.grey.shade200,
-                        child: const Icon(Icons.broken_image),
+                  return InkWell(
+                    onTap: () {
+                      // FULL SCREEN VIEWER DIALOG
+                      showDialog(
+                        context: context,
+                        builder: (context) => Dialog(
+                          backgroundColor: Colors.black.withOpacity(0.9),
+                          insetPadding: EdgeInsets.zero,
+                          child: Stack(
+                            children: [
+                              // InteractiveViewer allows pinch-to-zoom on Mobile
+                              Center(
+                                child: InteractiveViewer(
+                                  panEnabled: true,
+                                  minScale: 0.5,
+                                  maxScale: 4,
+                                  child: Image.network(
+                                    evidence[index],
+                                    fit: BoxFit.contain,
+                                  ),
+                                ),
+                              ),
+                              Positioned(
+                                top: 40,
+                                right: 20,
+                                child: CircleAvatar(
+                                  backgroundColor: Colors.white24,
+                                  child: IconButton(
+                                    icon: const Icon(
+                                      Icons.close,
+                                      color: Colors.white,
+                                    ),
+                                    onPressed: () => Navigator.pop(context),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Hero(
+                        // Smooth transition animation
+                        tag: evidence[index],
+                        child: Image.network(
+                          evidence[index],
+                          fit: BoxFit.cover,
+                          errorBuilder: (context, error, stack) => Container(
+                            color: Colors.grey.shade200,
+                            child: const Icon(
+                              Icons.broken_image,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ),
                       ),
                     ),
                   );
                 },
               ),
 
-            const SizedBox(height: 100), // Padding for bottom
+            const SizedBox(height: 120), // Extra space for the bottom area
           ],
         ),
       ),
