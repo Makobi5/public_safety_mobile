@@ -19,12 +19,23 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
 
   Future<void> _markAsRead() async {
     try {
-      await Supabase.instance.client
+      final response = await Supabase.instance.client
           .from('incidents')
           .update({'user_read': true})
-          .eq('id', widget.incident['id']);
+          .eq('id', widget.incident['id'])
+          .select(); // This 'select' confirms if the row was actually updated
+
+      if (response.isNotEmpty) {
+        debugPrint(
+          "✅ Database updated: Case ${widget.incident['id']} is now READ",
+        );
+      } else {
+        debugPrint(
+          "❌ Database update failed: No rows were changed. Check RLS policies!",
+        );
+      }
     } catch (e) {
-      debugPrint("Error marking as read: $e");
+      debugPrint("Log error: $e");
     }
   }
 

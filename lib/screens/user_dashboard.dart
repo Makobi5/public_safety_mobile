@@ -328,7 +328,13 @@ class _UserDashboardState extends State<UserDashboard> {
                                 builder: (context) =>
                                     UserCaseDetailScreen(incident: incident),
                               ),
-                            ).then((_) => _loadDashboardData());
+                            ).then((_) {
+                              // This MUST be inside the .then() block
+                              debugPrint(
+                                "Returning to dashboard, refreshing list...",
+                              );
+                              _loadDashboardData();
+                            });
                           },
                           // --- STEP 4 CHANGE: ADDED NOTIFICATION DOT TO LEADING ---
                           leading: Stack(
