@@ -14,6 +14,7 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
   final supabase = Supabase.instance.client;
   late String _currentStatus;
   bool _isUpdating = false;
+  final _notesController = TextEditingController();
 
   final List<String> _statusOptions = [
     'Pending',
@@ -28,7 +29,7 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
   @override
   void initState() {
     super.initState();
-
+    _notesController.text = widget.incident['police_notes'] ?? "";
     // 1. Get the raw status from the database
     String rawStatus = widget.incident['status'] ?? 'Pending';
 
@@ -88,6 +89,21 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
       });
     } finally {
       if (mounted) setState(() => _isUpdating = false);
+    }
+  }
+
+  Future<void> _savePoliceNotes() async {
+    try {
+      await supabase
+          .from('incidents')
+          .update({'police_notes': _notesController.text.trim()})
+          .eq('id', widget.incident['id']);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Notes saved and sent to reporter")),
+      );
+    } catch (e) {
+      print("Error saving notes: $e");
     }
   }
 
@@ -247,7 +263,25 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
             ),
 
             const SizedBox(height: 25),
-
+            // Police Notes section
+            const Text(
+              "Officer's Feedback (Visible to User)",
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: _notesController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                hintText: "Enter instructions or updates for the citizen...",
+              ),
+            ),
+            const SizedBox(height: 8),
+            ElevatedButton(
+              onPressed: _savePoliceNotes,
+              child: const Text("Save Feedback"),
+            ),
             // 4. EVIDENCE GALLERY (With Step 4: Zoom Functionality)
             const Text(
               "Evidence Attached",

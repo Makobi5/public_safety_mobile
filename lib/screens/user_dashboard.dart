@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import 'incident_report_screen.dart';
 import 'welcome_screen.dart';
 import 'user_profile_screen.dart';
+import 'user_case_detail_screen.dart';
 
 class UserDashboard extends StatefulWidget {
   const UserDashboard({super.key});
@@ -116,7 +117,6 @@ class _UserDashboardState extends State<UserDashboard> {
       ),
       body: Column(
         children: [
-          // Header Section
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(20),
@@ -145,7 +145,6 @@ class _UserDashboardState extends State<UserDashboard> {
           ),
           const SizedBox(height: 20),
 
-          // Report Button
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: ElevatedButton.icon(
@@ -173,7 +172,6 @@ class _UserDashboardState extends State<UserDashboard> {
           ),
           const SizedBox(height: 20),
 
-          // Stats Row
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
@@ -181,7 +179,7 @@ class _UserDashboardState extends State<UserDashboard> {
                 Expanded(
                   child: _SummaryCard(
                     title: "Active Reports",
-                    count: activeReportsCount.toString(), // Real dynamic count
+                    count: activeReportsCount.toString(),
                     color: Colors.green,
                   ),
                 ),
@@ -213,7 +211,6 @@ class _UserDashboardState extends State<UserDashboard> {
             ),
           ),
 
-          // Scrollable Reports List
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -241,19 +238,14 @@ class _UserDashboardState extends State<UserDashboard> {
                     itemBuilder: (context, index) {
                       final incident = _myIncidents[index];
 
-                      // SAFE DATA EXTRACTION
                       final String type =
                           incident['incident_type']?.toString() ?? "Unknown";
-                      final String desc =
-                          incident['description']?.toString() ??
-                          "No description";
                       final String status =
-                          incident['status']?.toString() ?? "pending";
+                          incident['status']?.toString() ?? "Pending";
                       final String createdAt =
                           incident['created_at']?.toString() ??
                           DateTime.now().toIso8601String();
 
-                      // Safely parse date
                       String formattedDate = "N/A";
                       try {
                         formattedDate = DateFormat(
@@ -270,6 +262,18 @@ class _UserDashboardState extends State<UserDashboard> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: ListTile(
+                          // --- STEP 4 CHANGE: NAVIGATION ADDED HERE ---
+                          onTap: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) =>
+                                    UserCaseDetailScreen(incident: incident),
+                              ),
+                            ).then(
+                              (_) => _loadDashboardData(),
+                            ); // Refresh if status changed
+                          },
                           leading: CircleAvatar(
                             backgroundColor: const Color(
                               0xFF003366,
@@ -287,23 +291,36 @@ class _UserDashboardState extends State<UserDashboard> {
                             "Reported: $formattedDate",
                             style: const TextStyle(fontSize: 12),
                           ),
-                          trailing: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: _getStatusColor(status).withOpacity(0.1),
-                              borderRadius: BorderRadius.circular(8),
-                            ),
-                            child: Text(
-                              status.toUpperCase(),
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                                color: _getStatusColor(status),
+                          trailing: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: _getStatusColor(
+                                    status,
+                                  ).withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  status.toUpperCase(),
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.bold,
+                                    color: _getStatusColor(status),
+                                  ),
+                                ),
                               ),
-                            ),
+                              const SizedBox(width: 8),
+                              const Icon(
+                                Icons.chevron_right,
+                                color: Colors.grey,
+                                size: 20,
+                              ),
+                            ],
                           ),
                         ),
                       );
