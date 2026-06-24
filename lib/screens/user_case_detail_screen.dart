@@ -1,19 +1,41 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 
-class UserCaseDetailScreen extends StatelessWidget {
+class UserCaseDetailScreen extends StatefulWidget {
   final Map<String, dynamic> incident;
   const UserCaseDetailScreen({super.key, required this.incident});
 
   @override
+  State<UserCaseDetailScreen> createState() => _UserCaseDetailScreenState();
+}
+
+class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
+  @override
+  void initState() {
+    super.initState();
+    _markAsRead(); // Step 5: Mark as read immediately when user opens it
+  }
+
+  Future<void> _markAsRead() async {
+    try {
+      await Supabase.instance.client
+          .from('incidents')
+          .update({'user_read': true})
+          .eq('id', widget.incident['id']);
+    } catch (e) {
+      debugPrint("Error marking as read: $e");
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final DateTime date = DateTime.parse(incident['created_at']);
-    final String status = incident['status'] ?? 'Pending';
-    final List<dynamic> evidence = incident['evidence_urls'] ?? [];
+    final DateTime date = DateTime.parse(widget.incident['created_at']);
+    final List<dynamic> evidence = widget.incident['evidence_urls'] ?? [];
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Report Details"),
+        title: const Text("Report Progress"),
         backgroundColor: const Color(0xFF003366),
         foregroundColor: Colors.white,
       ),
@@ -41,7 +63,7 @@ class UserCaseDetailScreen extends StatelessWidget {
                         ),
                         const SizedBox(width: 10),
                         Text(
-                          "Current Status: ${status.toUpperCase()}",
+                          "Current Status: ${widget.incident['status']?.toUpperCase() ?? 'PENDING'}",
                           style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             color: Color(0xFF003366),
@@ -58,12 +80,10 @@ class UserCaseDetailScreen extends StatelessWidget {
                 ),
               ),
             ),
+            const SizedBox(height: 30),
 
-            const SizedBox(height: 25),
-
-            // Police Feedback Section
             const Text(
-              "Official Response",
+              "Officer's Response",
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
             ),
             const SizedBox(height: 10),
@@ -76,38 +96,30 @@ class UserCaseDetailScreen extends StatelessWidget {
                 border: Border.all(color: Colors.green.shade100, width: 2),
               ),
               child: Text(
-                incident['police_notes'] ??
+                widget.incident['police_notes'] ??
                     "No message from the police yet. Please stay safe.",
                 style: TextStyle(
-                  color: incident['police_notes'] == null
+                  color: widget.incident['police_notes'] == null
                       ? Colors.grey
                       : Colors.black87,
                 ),
               ),
             ),
 
-            const SizedBox(height: 25),
-
-            // Original Report
-            const Text(
-              "My Report Details",
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
-            const SizedBox(height: 10),
-            Text("Type: ${incident['incident_type']}"),
-            Text("Date: ${DateFormat('MMM d, yyyy').format(date)}"),
-            const Divider(height: 30),
+            const SizedBox(height: 30),
+            const Divider(),
             Text(
-              incident['description'] ?? "",
-              style: const TextStyle(height: 1.5),
+              "Reported Type: ${widget.incident['incident_type']}",
+              style: const TextStyle(fontWeight: FontWeight.bold),
             ),
+            Text("Date: ${DateFormat('MMM d, yyyy').format(date)}"),
+            const SizedBox(height: 15),
+            Text(widget.incident['description'] ?? ""),
+            const SizedBox(height: 30),
 
-            const SizedBox(height: 25),
-
-            // Evidence
             if (evidence.isNotEmpty) ...[
               const Text(
-                "Evidence Sent",
+                "Evidence Submitted",
                 style: TextStyle(fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),

@@ -21,11 +21,66 @@ class _UserDashboardState extends State<UserDashboard> {
   int activeReportsCount = 0;
   List<Map<String, dynamic>> _myIncidents = [];
   bool _isLoading = true;
+  late RealtimeChannel _statusSubscription;
 
   @override
   void initState() {
     super.initState();
     _loadDashboardData();
+    _setupRealtimeListener();
+  }
+
+  void _setupRealtimeListener() {
+    final userId = supabase.auth.currentUser!.id;
+
+    _statusSubscription = supabase
+        .channel('public:incidents')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'incidents',
+          filter: PostgresChangeFilter(
+            type: PostgresChangeFilterType.eq,
+            column: 'user_id',
+            value: userId,
+          ),
+          callback: (payload) {
+            final newData = payload.newRecord;
+            // If the admin updated it and it's marked as unread
+            if (newData['user_read'] == false) {
+              _showUpdateNotification(newData['incident_type']);
+              _loadDashboardData(); // Refresh the list automatically
+            }
+          },
+        )
+        .subscribe();
+  }
+
+  void _showUpdateNotification(String type) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.notifications_active, color: Colors.white),
+            const SizedBox(width: 10),
+            Expanded(child: Text("Update on your $type case!")),
+          ],
+        ),
+        backgroundColor: const Color(0xFF003366),
+        behavior: SnackBarBehavior.floating,
+        action: SnackBarAction(
+          label: "VIEW",
+          textColor: Colors.yellow,
+          onPressed: () {},
+        ),
+      ),
+    );
+  }
+
+  @override
+  void dispose() {
+    supabase.removeChannel(_statusSubscription); // Stop listening when closing
+    super.dispose();
   }
 
   // Fetches both User Profile and their specific Incident Reports
@@ -238,6 +293,7 @@ class _UserDashboardState extends State<UserDashboard> {
                     itemBuilder: (context, index) {
                       final incident = _myIncidents[index];
 
+                      // SAFE DATA EXTRACTION
                       final String type =
                           incident['incident_type']?.toString() ?? "Unknown";
                       final String status =
@@ -245,6 +301,9 @@ class _UserDashboardState extends State<UserDashboard> {
                       final String createdAt =
                           incident['created_at']?.toString() ??
                           DateTime.now().toIso8601String();
+
+                      // --- STEP 4 CHANGE: CHECK FOR UNREAD STATUS ---
+                      final bool isUnread = incident['user_read'] == false;
 
                       String formattedDate = "N/A";
                       try {
@@ -262,7 +321,6 @@ class _UserDashboardState extends State<UserDashboard> {
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: ListTile(
-                          // --- STEP 4 CHANGE: NAVIGATION ADDED HERE ---
                           onTap: () {
                             Navigator.push(
                               context,
@@ -270,22 +328,73 @@ class _UserDashboardState extends State<UserDashboard> {
                                 builder: (context) =>
                                     UserCaseDetailScreen(incident: incident),
                               ),
-                            ).then(
-                              (_) => _loadDashboardData(),
-                            ); // Refresh if status changed
+                            ).then((_) => _loadDashboardData());
                           },
-                          leading: CircleAvatar(
-                            backgroundColor: const Color(
-                              0xFF003366,
-                            ).withOpacity(0.1),
-                            child: const Icon(
-                              Icons.description,
-                              color: Color(0xFF003366),
-                            ),
+                          // --- STEP 4 CHANGE: ADDED NOTIFICATION DOT TO LEADING ---
+                          leading: Stack(
+                            children: [
+                              CircleAvatar(
+                                backgroundColor: const Color(
+                                  0xFF003366,
+                                ).withOpacity(0.1),
+                                child: const Icon(
+                                  Icons.description,
+                                  color: Color(0xFF003366),
+                                ),
+                              ),
+                              if (isUnread)
+                                Positioned(
+                                  right: 0,
+                                  top: 0,
+                                  child: Container(
+                                    padding: const EdgeInsets.all(1),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    constraints: const BoxConstraints(
+                                      minWidth: 12,
+                                      minHeight: 12,
+                                    ),
+                                    child: const CircleAvatar(
+                                      radius: 5,
+                                      backgroundColor: Colors.red,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
-                          title: Text(
-                            type,
-                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          // --- STEP 4 CHANGE: ADDED "UPDATED" BADGE TO TITLE ---
+                          title: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  type,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                              if (isUnread)
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 2,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.blue.shade600,
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
+                                  child: const Text(
+                                    "UPDATED",
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 8,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ),
+                            ],
                           ),
                           subtitle: Text(
                             "Reported: $formattedDate",
