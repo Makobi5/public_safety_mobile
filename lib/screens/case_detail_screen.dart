@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class CaseDetailScreen extends StatefulWidget {
   final Map<String, dynamic> incident;
@@ -240,18 +241,98 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
                 physics: const NeverScrollableScrollPhysics(),
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
                   crossAxisCount: 2,
-                  mainAxisSpacing: 10,
                   crossAxisSpacing: 10,
+                  mainAxisSpacing: 10,
                 ),
                 itemCount: evidence.length,
-                itemBuilder: (context, index) => InkWell(
-                  onTap: () => _showFullScreenImage(evidence[index]),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(10),
-                    child: Image.network(evidence[index], fit: BoxFit.cover),
-                  ),
-                ),
+                itemBuilder: (context, index) {
+                  final imageUrl = evidence[index].toString();
+                  return InkWell(
+                    onTap: () => _showEvidenceActions(context, imageUrl),
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Image.network(imageUrl, fit: BoxFit.cover),
+                          // Tiny download indicator on thumbnail
+                          Positioned(
+                            right: 5,
+                            bottom: 5,
+                            child: CircleAvatar(
+                              radius: 12,
+                              backgroundColor: Colors.black54,
+                              child: Icon(
+                                Icons.download,
+                                size: 14,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
               ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showEvidenceActions(BuildContext context, String url) {
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          children: [
+            Center(
+              child: InteractiveViewer(
+                // Allows Admin to pinch and zoom
+                panEnabled: true,
+                minScale: 0.5,
+                maxScale: 4,
+                child: Image.network(url),
+              ),
+            ),
+            // Top Bar with Close and Download
+            Positioned(
+              top: 40,
+              left: 20,
+              right: 20,
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  IconButton(
+                    icon: const Icon(
+                      Icons.close,
+                      color: Colors.white,
+                      size: 30,
+                    ),
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      if (await canLaunchUrl(Uri.parse(url))) {
+                        await launchUrl(
+                          Uri.parse(url),
+                          mode: LaunchMode.externalApplication,
+                        );
+                      }
+                    },
+                    icon: const Icon(Icons.download),
+                    label: const Text("Download"),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      foregroundColor: Colors.black,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
       ),

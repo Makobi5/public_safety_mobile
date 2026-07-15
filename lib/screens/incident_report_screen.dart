@@ -101,12 +101,31 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   }
 
   Future<void> _pickFiles() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(
-      allowMultiple: true,
-      type: FileType.media,
-    );
-    if (result != null) {
-      setState(() => _selectedFiles = result.files);
+    try {
+      FilePickerResult? result = await FilePicker.platform.pickFiles(
+        allowMultiple: true,
+        type: FileType.media,
+        // CRITICAL FOR WEB: This ensures file.bytes is not null
+        withData: true,
+      );
+
+      if (result != null) {
+        setState(() {
+          // Append new files to the list instead of replacing
+          _selectedFiles.addAll(result.files);
+
+          // Limit to 5 files
+          if (_selectedFiles.length > 5) {
+            _selectedFiles = _selectedFiles.sublist(0, 5);
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("Maximum 5 files allowed")),
+            );
+          }
+        });
+        debugPrint("Files in list: ${_selectedFiles.length}");
+      }
+    } catch (e) {
+      debugPrint("Picker error: $e");
     }
   }
 
@@ -134,33 +153,41 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
       for (var file in _selectedFiles) {
         final String fileName =
             '${DateTime.now().millisecondsSinceEpoch}_${file.name}';
-        final String path = 'evidence/${user.id}/$fileName';
+        final String storagePath = 'evidence/${user.id}/$fileName';
 
-        if (kIsWeb) {
-          // Web uses bytes
-          await supabase.storage
+        try {
+          if (kIsWeb) {
+            // WEB: Check if bytes exist
+            if (file.bytes == null) {
+              debugPrint("Skipping file ${file.name}: bytes are null");
+              continue;
+            }
+            await supabase.storage
+                .from('incident-evidence')
+                .uploadBinary(
+                  storagePath,
+                  file.bytes!,
+                  fileOptions: const FileOptions(
+                    cacheControl: '3600',
+                    upsert: false,
+                  ),
+                );
+          } else {
+            // MOBILE: Check if path exists
+            if (file.path == null) continue;
+            await supabase.storage
+                .from('incident-evidence')
+                .upload(storagePath, File(file.path!));
+          }
+
+          final String publicUrl = supabase.storage
               .from('incident-evidence')
-              .uploadBinary(
-                path,
-                file.bytes!,
-                fileOptions: FileOptions(
-                  contentType: file.extension != null
-                      ? 'image/${file.extension}'
-                      : 'image/jpeg',
-                ),
-              );
-        } else {
-          // Mobile uses file path
-          await supabase.storage
-              .from('incident-evidence')
-              .upload(path, File(file.path!));
+              .getPublicUrl(storagePath);
+          uploadedUrls.add(publicUrl);
+        } catch (uploadError) {
+          debugPrint("Failed to upload ${file.name}: $uploadError");
+          // Optionally notify the user that one specific file failed
         }
-
-        // Get the Public URL for the admin to view later
-        final String publicUrl = supabase.storage
-            .from('incident-evidence')
-            .getPublicUrl(path);
-        uploadedUrls.add(publicUrl);
       }
 
       // 3. SAVE DATA TO 'incidents' TABLE
@@ -509,6 +536,36 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
+                if (_selectedFiles.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 15),
+                    child: Column(
+                      children: _selectedFiles.asMap().entries.map((entry) {
+                        int index = entry.key;
+                        var file = entry.value;
+                        return ListTile(
+                          dense: true,
+                          leading: const Icon(
+                            Icons.insert_drive_file,
+                            color: Color(0xFF003366),
+                          ),
+                          title: Text(
+                            file.name,
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          trailing: IconButton(
+                            icon: const Icon(
+                              Icons.delete,
+                              color: Colors.red,
+                              size: 18,
+                            ),
+                            onPressed: () =>
+                                setState(() => _selectedFiles.removeAt(index)),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ),
                 InkWell(
                   onTap: _isLoading ? null : _pickFiles,
                   child: Container(

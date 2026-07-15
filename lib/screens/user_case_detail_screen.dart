@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class UserCaseDetailScreen extends StatefulWidget {
   final Map<String, dynamic> incident;
@@ -131,28 +132,86 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
             if (evidence.isNotEmpty) ...[
               const Text(
                 "Evidence Submitted",
-                style: TextStyle(fontWeight: FontWeight.bold),
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
               const SizedBox(height: 10),
               SizedBox(
-                height: 120,
+                height: 150, // Slightly taller for better visibility
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
                   itemCount: evidence.length,
-                  itemBuilder: (context, index) => Padding(
-                    padding: const EdgeInsets.only(right: 10),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
-                      child: Image.network(
-                        evidence[index],
-                        width: 120,
-                        fit: BoxFit.cover,
+                  itemBuilder: (context, index) {
+                    final url = evidence[index].toString();
+                    return Padding(
+                      padding: const EdgeInsets.only(right: 12),
+                      child: InkWell(
+                        onTap: () =>
+                            _showUserZoomView(context, url), // Call zoom view
+                        child: Column(
+                          children: [
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(12),
+                              child: Image.network(
+                                url,
+                                width: 120,
+                                height: 110,
+                                fit: BoxFit.cover,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            const Text(
+                              "Tap to view/save",
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.grey,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
-                  ),
+                    );
+                  },
                 ),
               ),
             ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showUserZoomView(BuildContext context, String url) {
+    // We reuse the same logic as Admin for consistency
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        backgroundColor: Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          children: [
+            Center(child: InteractiveViewer(child: Image.network(url))),
+            Positioned(
+              bottom: 40,
+              left: 40,
+              right: 40,
+              child: ElevatedButton.icon(
+                onPressed: () async {
+                  final uri = Uri.parse(url);
+                  if (await canLaunchUrl(uri))
+                    await launchUrl(uri, mode: LaunchMode.externalApplication);
+                },
+                icon: const Icon(Icons.download),
+                label: const Text("Download Evidence"),
+              ),
+            ),
+            Positioned(
+              top: 40,
+              right: 20,
+              child: IconButton(
+                icon: Icon(Icons.close, color: Colors.white),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
           ],
         ),
       ),
