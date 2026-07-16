@@ -1,7 +1,14 @@
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
-import 'package:url_launcher/url_launcher.dart';
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+
+// ignore: avoid_web_libraries_in_dot_dart
+import 'dart:html' as html; // For web downloads
 
 class UserCaseDetailScreen extends StatefulWidget {
   final Map<String, dynamic> incident;
@@ -12,31 +19,73 @@ class UserCaseDetailScreen extends StatefulWidget {
 }
 
 class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
+  bool _isDownloading = false;
+
   @override
   void initState() {
     super.initState();
-    _markAsRead(); // Step 5: Mark as read immediately when user opens it
+    _markAsRead();
   }
 
+  // --- LOGIC: MARK AS READ ---
   Future<void> _markAsRead() async {
     try {
-      final response = await Supabase.instance.client
+      await Supabase.instance.client
           .from('incidents')
           .update({'user_read': true})
-          .eq('id', widget.incident['id'])
-          .select(); // This 'select' confirms if the row was actually updated
+          .eq('id', widget.incident['id']);
+      debugPrint("Notification cleared for user.");
+    } catch (e) {
+      debugPrint("Mark as read error: $e");
+    }
+  }
 
-      if (response.isNotEmpty) {
-        debugPrint(
-          "✅ Database updated: Case ${widget.incident['id']} is now READ",
-        );
+  // --- LOGIC: SECURE DOWNLOAD (WEB & MOBILE) ---
+  Future<void> _downloadFile(String url) async {
+    setState(() => _isDownloading = true);
+    String fileName = url.split('/').last;
+
+    try {
+      if (kIsWeb) {
+        // WEB LOGIC: Create a Blob and trigger browser download
+        final response = await http.get(Uri.parse(url));
+        final blob = html.Blob([response.bodyBytes]);
+        final blobUrl = html.Url.createObjectUrlFromBlob(blob);
+        final anchor = html.AnchorElement(href: blobUrl)
+          ..setAttribute("download", "SafeWatch_$fileName")
+          ..click();
+        html.Url.revokeObjectUrl(blobUrl);
       } else {
-        debugPrint(
-          "❌ Database update failed: No rows were changed. Check RLS policies!",
-        );
+        // MOBILE LOGIC: Request storage and save to file
+        if (Platform.isAndroid) {
+          await Permission.storage.request();
+          await Permission.photos.request();
+        }
+
+        final response = await http.get(Uri.parse(url));
+        Directory? directory = Platform.isAndroid
+            ? Directory('/storage/emulated/0/Download')
+            : await getApplicationDocumentsDirectory();
+
+        if (!await directory.exists())
+          directory = await getExternalStorageDirectory();
+
+        final File file = File("${directory!.path}/SafeWatch_$fileName");
+        await file.writeAsBytes(response.bodyBytes);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text("Saved to: ${file.path}"),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       }
     } catch (e) {
-      debugPrint("Log error: $e");
+      debugPrint("Download error: $e");
+    } finally {
+      if (mounted) setState(() => _isDownloading = false);
     }
   }
 
@@ -56,7 +105,7 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Status Timeline Card
+            // Status Info Card
             Card(
               elevation: 0,
               color: Colors.blue.shade50,
@@ -75,7 +124,7 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
                         ),
                         const SizedBox(width: 10),
                         Text(
-                          "Current Status: ${widget.incident['status']?.toUpperCase() ?? 'PENDING'}",
+                          "Status: ${widget.incident['status']?.toUpperCase() ?? 'PENDING'}",
                           style: const TextStyle(
                             fontWeight: FontWeight.bold,
                             color: Color(0xFF003366),
@@ -85,15 +134,15 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
                     ),
                     const SizedBox(height: 10),
                     const Text(
-                      "Your report is being reviewed by the local police unit.",
+                      "Your report is currently being processed by the system.",
                       style: TextStyle(fontSize: 13),
                     ),
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: 30),
 
+            const SizedBox(height: 30),
             const Text(
               "Officer's Response",
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
@@ -109,7 +158,7 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
               ),
               child: Text(
                 widget.incident['police_notes'] ??
-                    "No message from the police yet. Please stay safe.",
+                    "Waiting for official feedback. Please stay safe.",
                 style: TextStyle(
                   color: widget.incident['police_notes'] == null
                       ? Colors.grey
@@ -120,23 +169,26 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
 
             const SizedBox(height: 30),
             const Divider(),
+            const SizedBox(height: 10),
             Text(
-              "Reported Type: ${widget.incident['incident_type']}",
+              "Report Type: ${widget.incident['incident_type']}",
               style: const TextStyle(fontWeight: FontWeight.bold),
             ),
-            Text("Date: ${DateFormat('MMM d, yyyy').format(date)}"),
+            Text("Filed on: ${DateFormat('MMM d, yyyy HH:mm').format(date)}"),
             const SizedBox(height: 15),
             Text(widget.incident['description'] ?? ""),
+
             const SizedBox(height: 30),
 
+            // EVIDENCE LIST
             if (evidence.isNotEmpty) ...[
               const Text(
                 "Evidence Submitted",
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 15),
               SizedBox(
-                height: 150, // Slightly taller for better visibility
+                height: 160,
                 child: ListView.builder(
                   scrollDirection: Axis.horizontal,
                   itemCount: evidence.length,
@@ -145,8 +197,7 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
                     return Padding(
                       padding: const EdgeInsets.only(right: 12),
                       child: InkWell(
-                        onTap: () =>
-                            _showUserZoomView(context, url), // Call zoom view
+                        onTap: () => _showUserZoomView(context, url),
                         child: Column(
                           children: [
                             ClipRRect(
@@ -158,13 +209,23 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
                                 fit: BoxFit.cover,
                               ),
                             ),
-                            const SizedBox(height: 4),
-                            const Text(
-                              "Tap to view/save",
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey,
-                              ),
+                            const SizedBox(height: 8),
+                            const Row(
+                              children: [
+                                Icon(
+                                  Icons.zoom_in,
+                                  size: 14,
+                                  color: Colors.grey,
+                                ),
+                                SizedBox(width: 4),
+                                Text(
+                                  "View/Save",
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: Colors.grey,
+                                  ),
+                                ),
+                              ],
                             ),
                           ],
                         ),
@@ -181,38 +242,61 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
   }
 
   void _showUserZoomView(BuildContext context, String url) {
-    // We reuse the same logic as Admin for consistency
     showDialog(
       context: context,
-      builder: (context) => Dialog(
-        backgroundColor: Colors.black,
-        insetPadding: EdgeInsets.zero,
-        child: Stack(
-          children: [
-            Center(child: InteractiveViewer(child: Image.network(url))),
-            Positioned(
-              bottom: 40,
-              left: 40,
-              right: 40,
-              child: ElevatedButton.icon(
-                onPressed: () async {
-                  final uri = Uri.parse(url);
-                  if (await canLaunchUrl(uri))
-                    await launchUrl(uri, mode: LaunchMode.externalApplication);
-                },
-                icon: const Icon(Icons.download),
-                label: const Text("Download Evidence"),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => Dialog(
+          backgroundColor: Colors.black,
+          insetPadding: EdgeInsets.zero,
+          child: Stack(
+            children: [
+              Center(
+                child: InteractiveViewer(
+                  minScale: 0.5,
+                  maxScale: 4,
+                  child: Image.network(url),
+                ),
               ),
-            ),
-            Positioned(
-              top: 40,
-              right: 20,
-              child: IconButton(
-                icon: Icon(Icons.close, color: Colors.white),
-                onPressed: () => Navigator.pop(context),
+              // Controls Bar
+              Positioned(
+                top: 40,
+                left: 20,
+                right: 20,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    IconButton(
+                      icon: const Icon(
+                        Icons.close,
+                        color: Colors.white,
+                        size: 30,
+                      ),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                    ElevatedButton.icon(
+                      onPressed: _isDownloading
+                          ? null
+                          : () async {
+                              await _downloadFile(url);
+                            },
+                      icon: _isDownloading
+                          ? const SizedBox(
+                              width: 15,
+                              height: 15,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.download),
+                      label: const Text("Save Evidence"),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.white,
+                        foregroundColor: Colors.black,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

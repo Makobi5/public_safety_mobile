@@ -2,6 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'dart:io';
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
+import 'package:permission_handler/permission_handler.dart';
+// ignore: avoid_web_libraries_in_dot_dart
+import 'dart:html' as html; // For web downloads
 
 class CaseDetailScreen extends StatefulWidget {
   final Map<String, dynamic> incident;
@@ -281,7 +288,77 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
     );
   }
 
+  Future<void> _downloadFile(String url, String originalFileName) async {
+    setState(() => _isUpdating = true); // Use your existing loading state
+
+    try {
+      if (kIsWeb) {
+        // --- WEB DOWNLOAD LOGIC ---
+        final response = await http.get(Uri.parse(url));
+        final blob = html.Blob([response.bodyBytes]);
+        final blobUrl = html.Url.createObjectUrlFromBlob(blob);
+        final anchor = html.AnchorElement(href: blobUrl)
+          ..setAttribute("download", originalFileName)
+          ..click();
+        html.Url.revokeObjectUrl(blobUrl);
+      } else {
+        // --- MOBILE DOWNLOAD LOGIC ---
+        // 1. Request Permission
+        var status = await Permission.storage.request();
+        if (!status.isGranted) {
+          // For Android 13+, storage permission is slightly different, check media permissions
+          await Permission.photos.request();
+        }
+
+        // 2. Download bytes
+        final response = await http.get(Uri.parse(url));
+
+        // 3. Get directory to save (Downloads folder on Android)
+        Directory? directory;
+        if (Platform.isAndroid) {
+          directory = Directory('/storage/emulated/0/Download');
+          if (!await directory.exists()) {
+            directory = await getExternalStorageDirectory();
+          }
+        } else {
+          directory = await getApplicationDocumentsDirectory();
+        }
+
+        final String fileName =
+            "SafeWatch_Evidence_${DateTime.now().millisecondsSinceEpoch}.jpg";
+        final File file = File("${directory!.path}/$fileName");
+
+        await file.writeAsBytes(response.bodyBytes);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text("File saved to: ${file.path}"),
+              backgroundColor: Colors.green,
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint("Download Error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Failed to download file"),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isUpdating = false);
+    }
+  }
+
   void _showEvidenceActions(BuildContext context, String url) {
+    // Extract a name from the URL or use a timestamp
+    String fileName = url.split('/').last;
+
     showDialog(
       context: context,
       builder: (context) => Dialog(
@@ -291,14 +368,12 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
           children: [
             Center(
               child: InteractiveViewer(
-                // Allows Admin to pinch and zoom
                 panEnabled: true,
                 minScale: 0.5,
                 maxScale: 4,
                 child: Image.network(url),
               ),
             ),
-            // Top Bar with Close and Download
             Positioned(
               top: 40,
               left: 20,
@@ -315,19 +390,24 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
                     onPressed: () => Navigator.pop(context),
                   ),
                   ElevatedButton.icon(
-                    onPressed: () async {
-                      if (await canLaunchUrl(Uri.parse(url))) {
-                        await launchUrl(
-                          Uri.parse(url),
-                          mode: LaunchMode.externalApplication,
-                        );
-                      }
-                    },
-                    icon: const Icon(Icons.download),
-                    label: const Text("Download"),
+                    onPressed: _isUpdating
+                        ? null
+                        : () {
+                            Navigator.pop(context);
+                            _downloadFile(url, fileName);
+                          },
+                    icon: _isUpdating
+                        ? const SizedBox(
+                            width: 15,
+                            height: 15,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.download),
+                    label: const Text("Download to Device"),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.white,
-                      foregroundColor: Colors.black,
+                      foregroundColor: const Color(0xFF003366),
+                      shape: const StadiumBorder(),
                     ),
                   ),
                 ],
