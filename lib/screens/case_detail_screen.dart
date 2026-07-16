@@ -10,6 +10,7 @@ import 'package:permission_handler/permission_handler.dart';
 // ignore: avoid_web_libraries_in_dot_dart
 import 'dart:html' as html; // For web downloads
 import '../widgets/app_video_player.dart';
+import '../widgets/app_audio_player.dart';
 
 class CaseDetailScreen extends StatefulWidget {
   final Map<String, dynamic> incident;
@@ -88,6 +89,11 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
   bool _isVideo(String url) {
     final videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
     return videoExtensions.any((ext) => url.toLowerCase().contains(ext));
+  }
+
+  bool _isAudio(String url) {
+    final audioExtensions = ['.mp3', '.wav', '.m4a', '.aac', '.ogg'];
+    return audioExtensions.any((ext) => url.toLowerCase().contains(ext));
   }
 
   Future<void> _savePoliceNotes() async {
@@ -261,38 +267,41 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
                 itemBuilder: (context, index) {
                   final String mediaUrl = evidence[index].toString();
                   final bool isVideoFile = _isVideo(mediaUrl);
+                  final bool isAudioFile = _isAudio(mediaUrl);
 
                   return InkWell(
                     onTap: () {
                       showDialog(
                         context: context,
                         builder: (context) => Dialog(
-                          backgroundColor: Colors.black,
-                          insetPadding: EdgeInsets.zero,
-                          child: Stack(
-                            children: [
-                              Center(
-                                child: isVideoFile
-                                    ? AspectRatio(
-                                        aspectRatio: 16 / 9,
-                                        child: AppVideoPlayer(url: mediaUrl),
-                                      )
-                                    : InteractiveViewer(
-                                        child: Image.network(mediaUrl),
-                                      ),
-                              ),
-                              Positioned(
-                                top: 40,
-                                right: 20,
-                                child: IconButton(
-                                  icon: const Icon(
-                                    Icons.close,
-                                    color: Colors.white,
+                          backgroundColor: isAudioFile
+                              ? Colors.white
+                              : Colors.black,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(20.0),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (isAudioFile)
+                                  AppAudioPlayer(url: mediaUrl)
+                                else if (isVideoFile)
+                                  AspectRatio(
+                                    aspectRatio: 16 / 9,
+                                    child: AppVideoPlayer(url: mediaUrl),
+                                  )
+                                else
+                                  InteractiveViewer(
+                                    child: Image.network(mediaUrl),
                                   ),
+                                TextButton(
                                   onPressed: () => Navigator.pop(context),
+                                  child: const Text("Close"),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       );
@@ -300,26 +309,18 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(12),
                       child: Container(
-                        color: Colors.grey.shade200,
-                        child: isVideoFile
-                            ? const Center(
-                                child: Column(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.play_circle_fill,
-                                      size: 40,
-                                      color: Color(0xFF003366),
-                                    ),
-                                    Text(
-                                      "VIDEO",
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ),
+                        color: Colors.grey.shade100,
+                        child: isAudioFile
+                            ? const Icon(
+                                Icons.audiotrack_rounded,
+                                size: 40,
+                                color: Color(0xFF003366),
+                              )
+                            : isVideoFile
+                            ? const Icon(
+                                Icons.play_circle_fill,
+                                size: 40,
+                                color: Color(0xFF003366),
                               )
                             : Image.network(mediaUrl, fit: BoxFit.cover),
                       ),

@@ -9,6 +9,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../widgets/app_video_player.dart';
 // ignore: avoid_web_libraries_in_dot_dart
 import 'dart:html' as html; // For web downloads
+import '../widgets/app_audio_player.dart';
 
 class UserCaseDetailScreen extends StatefulWidget {
   final Map<String, dynamic> incident;
@@ -43,6 +44,11 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
   bool _isVideo(String url) {
     final videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
     return videoExtensions.any((ext) => url.toLowerCase().contains(ext));
+  }
+
+  bool _isAudio(String url) {
+    final audioExtensions = ['.mp3', '.wav', '.m4a', '.aac', '.ogg'];
+    return audioExtensions.any((ext) => url.toLowerCase().contains(ext));
   }
 
   // --- LOGIC: SECURE DOWNLOAD (WEB & MOBILE) ---
@@ -200,14 +206,12 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
                   itemBuilder: (context, index) {
                     final url = evidence[index].toString();
                     final bool isVideoFile = _isVideo(url);
+                    final bool isAudioFile = _isAudio(url);
 
                     return Padding(
                       padding: const EdgeInsets.only(right: 12),
                       child: InkWell(
-                        onTap: () => _showUserZoomView(
-                          context,
-                          url,
-                        ), // Your existing zoom logic (updated with player)
+                        onTap: () => _showUserZoomView(context, url),
                         child: Column(
                           children: [
                             ClipRRect(
@@ -215,12 +219,19 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
                               child: Container(
                                 width: 120,
                                 height: 110,
-                                color: Colors.grey.shade100,
-                                child: isVideoFile
+                                color: const Color(0xFFF0F4F8),
+                                // --- SMART UI BASED ON FILE TYPE ---
+                                child: isAudioFile
                                     ? const Icon(
-                                        Icons.videocam,
+                                        Icons.audiotrack_rounded,
                                         size: 40,
-                                        color: Colors.grey,
+                                        color: Color(0xFF003366),
+                                      )
+                                    : isVideoFile
+                                    ? const Icon(
+                                        Icons.play_circle_fill,
+                                        size: 40,
+                                        color: Color(0xFF003366),
                                       )
                                     : Image.network(
                                         url,
@@ -232,7 +243,11 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
                             ),
                             const SizedBox(height: 4),
                             Text(
-                              isVideoFile ? "Tap to play" : "Tap to view",
+                              isAudioFile
+                                  ? "Play Audio"
+                                  : isVideoFile
+                                  ? "Play Video"
+                                  : "View Photo",
                               style: const TextStyle(
                                 fontSize: 10,
                                 color: Colors.grey,
@@ -254,62 +269,45 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
 
   void _showUserZoomView(BuildContext context, String url) {
     final bool isVideoFile = _isVideo(url);
+    final bool isAudioFile = _isAudio(url);
 
     showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => Dialog(
-          backgroundColor: Colors.black,
-          insetPadding: EdgeInsets.zero,
-          child: Stack(
-            children: [
-              Center(
-                // --- UPDATED LOGIC HERE ---
-                child: isVideoFile
+      builder: (context) => Dialog(
+        // Use white for audio (so buttons are visible), black for others
+        backgroundColor: isAudioFile ? Colors.white : Colors.black,
+        insetPadding: EdgeInsets.zero,
+        child: Stack(
+          children: [
+            Center(
+              child: Padding(
+                padding: const EdgeInsets.all(20.0),
+                child: isAudioFile
+                    ? AppAudioPlayer(url: url) // Show Audio Player
+                    : isVideoFile
                     ? AspectRatio(
                         aspectRatio: 16 / 9,
-                        child: AppVideoPlayer(url: url),
+                        child: AppVideoPlayer(url: url), // Show Video Player
                       )
-                    : InteractiveViewer(child: Image.network(url)),
+                    : InteractiveViewer(
+                        child: Image.network(url),
+                      ), // Show Image
               ),
-              // Controls Bar
-              Positioned(
-                top: 40,
-                left: 20,
-                right: 20,
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    IconButton(
-                      icon: const Icon(
-                        Icons.close,
-                        color: Colors.white,
-                        size: 30,
-                      ),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                    ElevatedButton.icon(
-                      onPressed: _isDownloading
-                          ? null
-                          : () => _downloadFile(url),
-                      icon: _isDownloading
-                          ? const SizedBox(
-                              width: 15,
-                              height: 15,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.download),
-                      label: const Text("Save Evidence"),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        foregroundColor: Colors.black,
-                      ),
-                    ),
-                  ],
+            ),
+            // Close Button
+            Positioned(
+              top: 40,
+              right: 20,
+              child: IconButton(
+                icon: Icon(
+                  Icons.close,
+                  color: isAudioFile ? Colors.black : Colors.white,
+                  size: 30,
                 ),
+                onPressed: () => Navigator.pop(context),
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
