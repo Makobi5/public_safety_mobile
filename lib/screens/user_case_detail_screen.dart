@@ -6,7 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
-
+import '../widgets/app_video_player.dart';
 // ignore: avoid_web_libraries_in_dot_dart
 import 'dart:html' as html; // For web downloads
 
@@ -38,6 +38,11 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
     } catch (e) {
       debugPrint("Mark as read error: $e");
     }
+  }
+
+  bool _isVideo(String url) {
+    final videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
+    return videoExtensions.any((ext) => url.toLowerCase().contains(ext));
   }
 
   // --- LOGIC: SECURE DOWNLOAD (WEB & MOBILE) ---
@@ -194,38 +199,44 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
                   itemCount: evidence.length,
                   itemBuilder: (context, index) {
                     final url = evidence[index].toString();
+                    final bool isVideoFile = _isVideo(url);
+
                     return Padding(
                       padding: const EdgeInsets.only(right: 12),
                       child: InkWell(
-                        onTap: () => _showUserZoomView(context, url),
+                        onTap: () => _showUserZoomView(
+                          context,
+                          url,
+                        ), // Your existing zoom logic (updated with player)
                         child: Column(
                           children: [
                             ClipRRect(
                               borderRadius: BorderRadius.circular(12),
-                              child: Image.network(
-                                url,
+                              child: Container(
                                 width: 120,
                                 height: 110,
-                                fit: BoxFit.cover,
+                                color: Colors.grey.shade100,
+                                child: isVideoFile
+                                    ? const Icon(
+                                        Icons.videocam,
+                                        size: 40,
+                                        color: Colors.grey,
+                                      )
+                                    : Image.network(
+                                        url,
+                                        width: 120,
+                                        height: 110,
+                                        fit: BoxFit.cover,
+                                      ),
                               ),
                             ),
-                            const SizedBox(height: 8),
-                            const Row(
-                              children: [
-                                Icon(
-                                  Icons.zoom_in,
-                                  size: 14,
-                                  color: Colors.grey,
-                                ),
-                                SizedBox(width: 4),
-                                Text(
-                                  "View/Save",
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: Colors.grey,
-                                  ),
-                                ),
-                              ],
+                            const SizedBox(height: 4),
+                            Text(
+                              isVideoFile ? "Tap to play" : "Tap to view",
+                              style: const TextStyle(
+                                fontSize: 10,
+                                color: Colors.grey,
+                              ),
                             ),
                           ],
                         ),
@@ -242,6 +253,8 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
   }
 
   void _showUserZoomView(BuildContext context, String url) {
+    final bool isVideoFile = _isVideo(url);
+
     showDialog(
       context: context,
       builder: (context) => StatefulBuilder(
@@ -251,11 +264,13 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
           child: Stack(
             children: [
               Center(
-                child: InteractiveViewer(
-                  minScale: 0.5,
-                  maxScale: 4,
-                  child: Image.network(url),
-                ),
+                // --- UPDATED LOGIC HERE ---
+                child: isVideoFile
+                    ? AspectRatio(
+                        aspectRatio: 16 / 9,
+                        child: AppVideoPlayer(url: url),
+                      )
+                    : InteractiveViewer(child: Image.network(url)),
               ),
               // Controls Bar
               Positioned(
@@ -276,9 +291,7 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
                     ElevatedButton.icon(
                       onPressed: _isDownloading
                           ? null
-                          : () async {
-                              await _downloadFile(url);
-                            },
+                          : () => _downloadFile(url),
                       icon: _isDownloading
                           ? const SizedBox(
                               width: 15,

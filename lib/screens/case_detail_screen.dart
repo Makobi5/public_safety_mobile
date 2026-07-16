@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 // ignore: avoid_web_libraries_in_dot_dart
 import 'dart:html' as html; // For web downloads
+import '../widgets/app_video_player.dart';
 
 class CaseDetailScreen extends StatefulWidget {
   final Map<String, dynamic> incident;
@@ -82,6 +83,11 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
     } finally {
       if (mounted) setState(() => _isUpdating = false);
     }
+  }
+
+  bool _isVideo(String url) {
+    final videoExtensions = ['.mp4', '.mov', '.avi', '.mkv', '.webm'];
+    return videoExtensions.any((ext) => url.toLowerCase().contains(ext));
   }
 
   Future<void> _savePoliceNotes() async {
@@ -253,30 +259,69 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
                 ),
                 itemCount: evidence.length,
                 itemBuilder: (context, index) {
-                  final imageUrl = evidence[index].toString();
+                  final String mediaUrl = evidence[index].toString();
+                  final bool isVideoFile = _isVideo(mediaUrl);
+
                   return InkWell(
-                    onTap: () => _showEvidenceActions(context, imageUrl),
+                    onTap: () {
+                      showDialog(
+                        context: context,
+                        builder: (context) => Dialog(
+                          backgroundColor: Colors.black,
+                          insetPadding: EdgeInsets.zero,
+                          child: Stack(
+                            children: [
+                              Center(
+                                child: isVideoFile
+                                    ? AspectRatio(
+                                        aspectRatio: 16 / 9,
+                                        child: AppVideoPlayer(url: mediaUrl),
+                                      )
+                                    : InteractiveViewer(
+                                        child: Image.network(mediaUrl),
+                                      ),
+                              ),
+                              Positioned(
+                                top: 40,
+                                right: 20,
+                                child: IconButton(
+                                  icon: const Icon(
+                                    Icons.close,
+                                    color: Colors.white,
+                                  ),
+                                  onPressed: () => Navigator.pop(context),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(12),
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Image.network(imageUrl, fit: BoxFit.cover),
-                          // Tiny download indicator on thumbnail
-                          Positioned(
-                            right: 5,
-                            bottom: 5,
-                            child: CircleAvatar(
-                              radius: 12,
-                              backgroundColor: Colors.black54,
-                              child: Icon(
-                                Icons.download,
-                                size: 14,
-                                color: Colors.white,
-                              ),
-                            ),
-                          ),
-                        ],
+                      child: Container(
+                        color: Colors.grey.shade200,
+                        child: isVideoFile
+                            ? const Center(
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      Icons.play_circle_fill,
+                                      size: 40,
+                                      color: Color(0xFF003366),
+                                    ),
+                                    Text(
+                                      "VIDEO",
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              )
+                            : Image.network(mediaUrl, fit: BoxFit.cover),
                       ),
                     ),
                   );
