@@ -8,8 +8,8 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../widgets/app_video_player.dart';
 // ignore: avoid_web_libraries_in_dot_dart
-import 'dart:html' as html; // For web downloads
 import '../widgets/app_audio_player.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class UserCaseDetailScreen extends StatefulWidget {
   final Map<String, dynamic> incident;
@@ -58,16 +58,13 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
 
     try {
       if (kIsWeb) {
-        // WEB LOGIC: Create a Blob and trigger browser download
-        final response = await http.get(Uri.parse(url));
-        final blob = html.Blob([response.bodyBytes]);
-        final blobUrl = html.Url.createObjectUrlFromBlob(blob);
-        final anchor = html.AnchorElement(href: blobUrl)
-          ..setAttribute("download", "SafeWatch_$fileName")
-          ..click();
-        html.Url.revokeObjectUrl(blobUrl);
+        // WEB LOGIC: Safe for the mobile compiler
+        final Uri uri = Uri.parse(url);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
       } else {
-        // MOBILE LOGIC: Request storage and save to file
+        // MOBILE LOGIC: Android/iOS
         if (Platform.isAndroid) {
           await Permission.storage.request();
           await Permission.photos.request();
@@ -87,7 +84,7 @@ class _UserCaseDetailScreenState extends State<UserCaseDetailScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text("Saved to: ${file.path}"),
+              content: Text("Saved to Downloads: ${file.path}"),
               backgroundColor: Colors.green,
             ),
           );

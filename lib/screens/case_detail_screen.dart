@@ -8,7 +8,6 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 // ignore: avoid_web_libraries_in_dot_dart
-import 'dart:html' as html; // For web downloads
 import '../widgets/app_video_player.dart';
 import '../widgets/app_audio_player.dart';
 
@@ -24,6 +23,7 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
   final supabase = Supabase.instance.client;
   late String _currentStatus;
   bool _isUpdating = false;
+  bool _isDownloading = false;
   final _notesController = TextEditingController();
 
   final List<String> _statusOptions = [
@@ -334,70 +334,48 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
     );
   }
 
-  Future<void> _downloadFile(String url, String originalFileName) async {
-    setState(() => _isUpdating = true); // Use your existing loading state
+  Future<void> _downloadFile(String url) async {
+    setState(() => _isUpdating = true);
+    String fileName = url.split('/').last;
 
     try {
       if (kIsWeb) {
-        // --- WEB DOWNLOAD LOGIC ---
-        final response = await http.get(Uri.parse(url));
-        final blob = html.Blob([response.bodyBytes]);
-        final blobUrl = html.Url.createObjectUrlFromBlob(blob);
-        final anchor = html.AnchorElement(href: blobUrl)
-          ..setAttribute("download", originalFileName)
-          ..click();
-        html.Url.revokeObjectUrl(blobUrl);
+        // WEB LOGIC: Safe for the mobile compiler
+        final Uri uri = Uri.parse(url);
+        if (await canLaunchUrl(uri)) {
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+        }
       } else {
-        // --- MOBILE DOWNLOAD LOGIC ---
-        // 1. Request Permission
-        var status = await Permission.storage.request();
-        if (!status.isGranted) {
-          // For Android 13+, storage permission is slightly different, check media permissions
+        // MOBILE LOGIC: Android/iOS
+        if (Platform.isAndroid) {
+          await Permission.storage.request();
           await Permission.photos.request();
         }
 
-        // 2. Download bytes
         final response = await http.get(Uri.parse(url));
+        Directory? directory = Platform.isAndroid
+            ? Directory('/storage/emulated/0/Download')
+            : await getApplicationDocumentsDirectory();
 
-        // 3. Get directory to save (Downloads folder on Android)
-        Directory? directory;
-        if (Platform.isAndroid) {
-          directory = Directory('/storage/emulated/0/Download');
-          if (!await directory.exists()) {
-            directory = await getExternalStorageDirectory();
-          }
-        } else {
-          directory = await getApplicationDocumentsDirectory();
-        }
+        if (!await directory.exists())
+          directory = await getExternalStorageDirectory();
 
-        final String fileName =
-            "SafeWatch_Evidence_${DateTime.now().millisecondsSinceEpoch}.jpg";
-        final File file = File("${directory!.path}/$fileName");
-
+        final File file = File("${directory!.path}/SafeWatch_$fileName");
         await file.writeAsBytes(response.bodyBytes);
 
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text("File saved to: ${file.path}"),
+              content: Text("Saved to Downloads: ${file.path}"),
               backgroundColor: Colors.green,
-              behavior: SnackBarBehavior.floating,
             ),
           );
         }
       }
     } catch (e) {
-      debugPrint("Download Error: $e");
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Failed to download file"),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      debugPrint("Download error: $e");
     } finally {
-      if (mounted) setState(() => _isUpdating = false);
+      if (mounted) setState(() => _isDownloading = false);
     }
   }
 
@@ -440,7 +418,7 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
                         ? null
                         : () {
                             Navigator.pop(context);
-                            _downloadFile(url, fileName);
+                            _downloadFile(url);
                           },
                     icon: _isUpdating
                         ? const SizedBox(
