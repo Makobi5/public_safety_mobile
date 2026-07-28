@@ -5,6 +5,9 @@ import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:geocoding/geocoding.dart';
+import 'dart:convert';
+import 'package:http/http.dart' as http;
 
 class IncidentReportScreen extends StatefulWidget {
   const IncidentReportScreen({super.key});
@@ -16,6 +19,15 @@ class IncidentReportScreen extends StatefulWidget {
 class _IncidentReportScreenState extends State<IncidentReportScreen> {
   int _currentStep = 1;
   final _formKey = GlobalKey<FormState>();
+  Position? _capturedPosition;
+  bool _isLocating = false;
+  String _locationAddress = "Location not captured yet";
+  double? _latitude;
+  double? _longitude;
+  bool _isLoadingStations = false;
+  List<Map<String, dynamic>> _policeStations = [];
+  String? _selectedPoliceStationId;
+  String? _selectedPoliceStationName;
 
   // --- Data for Step 1 ---
   String? _selectedIncidentType;
@@ -23,9 +35,6 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   DateTime? _selectedDate;
   TimeOfDay? _selectedTime;
 
-  // --- Data for Step 2 ---
-  Position? _capturedPosition;
-  bool _isLocating = false;
   final _additionalLocationController = TextEditingController();
   final _landmarkController = TextEditingController();
 
@@ -87,17 +96,94 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   Future<void> _captureLocation() async {
     setState(() => _isLocating = true);
     try {
-      LocationPermission permission = await Geolocator.checkPermission();
-      if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
+      // 1. Get raw coordinates (This works on Web)
+      Position position = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+      );
+
+      // 2. Get Place Name via OpenStreetMap (Web-safe alternative to geocoding package)
+      final url = Uri.parse(
+        'https://nominatim.openstreetmap.org/reverse?format=json&lat=${position.latitude}&lon=${position.longitude}&zoom=18&addressdetails=1',
+      );
+
+      final response = await http.get(url, headers: {'Accept-Language': 'en'});
+
+      String detectedDistrict = "Unknown District";
+      String displayName = "Unknown Location";
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        final address = data['address'];
+
+        // Extract District/City and specific street/village
+        detectedDistrict =
+            address['city'] ??
+            address['town'] ??
+            address['county'] ??
+            "Unknown";
+        displayName = data['display_name'] ?? "Location captured";
       }
-      Position position = await Geolocator.getCurrentPosition();
-      setState(() => _capturedPosition = position);
+
+      setState(() {
+        _capturedPosition = position;
+        _latitude = position.latitude;
+        _longitude = position.longitude;
+        // Show the readable address from the API
+        _locationAddress = displayName;
+      });
+
+      // 3. Fetch Police Stations based on the name of the place
+      await _fetchNearbyStations(detectedDistrict);
     } catch (e) {
       debugPrint("Location error: $e");
+      // Fallback: If geocoding fails, at least keep the numbers
+      setState(() {
+        _locationAddress =
+            "Lat: ${_latitude?.toStringAsFixed(4)}, Lon: ${_longitude?.toStringAsFixed(4)}";
+      });
     } finally {
       setState(() => _isLocating = false);
     }
+  }
+
+  Future<void> _fetchNearbyStations(String districtName) async {
+    setState(() => _isLoadingStations = true);
+    try {
+      final supabase = Supabase.instance.client;
+
+      // Search for stations matching the detected district
+      final data = await supabase
+          .from('police_stations')
+          .select()
+          .ilike('district', '%$districtName%');
+
+      final stations = List<Map<String, dynamic>>.from(data);
+
+      setState(() {
+        _policeStations = stations;
+        if (stations.isNotEmpty) {
+          _selectedPoliceStationId = stations[0]['id'];
+          _selectedPoliceStationName = stations[0]['name'];
+        } else {
+          // If no local station found, show all as fallback (like Kabale)
+          _loadAllStationsFallback();
+        }
+      });
+    } catch (e) {
+      debugPrint("Station error: $e");
+    } finally {
+      setState(() => _isLoadingStations = false);
+    }
+  }
+
+  // Helper to load all stations if current district has none in DB
+  Future<void> _loadAllStationsFallback() async {
+    final data = await Supabase.instance.client
+        .from('police_stations')
+        .select();
+    setState(() {
+      _policeStations = List<Map<String, dynamic>>.from(data);
+    });
   }
 
   Future<void> _pickFiles() async {
@@ -140,6 +226,19 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
       return;
     }
 
+    // 2. Final Location Check: Ensure user captured GPS before submitting
+    if (_capturedPosition == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Please capture your location in Step 2 before submitting",
+          ),
+        ),
+      );
+      setState(() => _currentStep = 2); // Send them back to capture location
+      return;
+    }
+
     setState(() => _isLoading = true);
 
     try {
@@ -149,7 +248,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
 
       List<String> uploadedUrls = [];
 
-      // 2. UPLOAD FILES TO STORAGE
+      // 3. UPLOAD FILES TO STORAGE
       for (var file in _selectedFiles) {
         final String fileName =
             '${DateTime.now().millisecondsSinceEpoch}_${file.name}';
@@ -157,11 +256,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
 
         try {
           if (kIsWeb) {
-            // WEB: Check if bytes exist
-            if (file.bytes == null) {
-              debugPrint("Skipping file ${file.name}: bytes are null");
-              continue;
-            }
+            if (file.bytes == null) continue;
             await supabase.storage
                 .from('incident-evidence')
                 .uploadBinary(
@@ -173,7 +268,6 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                   ),
                 );
           } else {
-            // MOBILE: Check if path exists
             if (file.path == null) continue;
             await supabase.storage
                 .from('incident-evidence')
@@ -186,36 +280,64 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
           uploadedUrls.add(publicUrl);
         } catch (uploadError) {
           debugPrint("Failed to upload ${file.name}: $uploadError");
-          // Optionally notify the user that one specific file failed
         }
       }
 
-      // 3. SAVE DATA TO 'incidents' TABLE
-      await supabase.from('incidents').insert({
+      // 4. SAVE DATA TO 'incidents' TABLE (Including GPS and Station)
+      final response = await supabase.from('incidents').insert({
         'user_id': user.id,
         'incident_type': _selectedIncidentType,
         'description': _descriptionController.text.trim(),
         'incident_date': _selectedDate?.toIso8601String(),
         'incident_time': _selectedTime?.format(context),
-        'latitude': _capturedPosition?.latitude,
-        'longitude': _capturedPosition?.longitude.toString(),
-        'location_address':
-            'GPS Captured', // We will improve this with Geocoding later
+
+        // GPS Data
+        'latitude': _capturedPosition!.latitude,
+        'longitude': _capturedPosition!.longitude.toString(),
+
+        // Location text details
+        'location_address': _additionalLocationController.text.trim().isNotEmpty
+            ? _additionalLocationController.text.trim()
+            : 'GPS Location Captured',
+        'landmark': _landmarkController.text.trim(),
+
+        // Routing to nearby station
+        'police_station_id': _selectedPoliceStationId,
+        'police_station_name': _selectedPoliceStationName,
+
         'evidence_urls': uploadedUrls,
-        'status': 'pending',
-      });
+        'status': 'Pending', // Using Capital P for consistency with Admin side
+        'user_read': true,
+      }).select(); // select() helps us get the ID back for the AI agent
+
+      // 5. TRIGGER AI TRIAGE AGENT (Optional - calls your swift-handler)
+      if (response.isNotEmpty) {
+        final newId = response[0]['id'];
+        try {
+          await supabase.functions.invoke(
+            'swift-handler',
+            body: {
+              'action': 'triage-incident',
+              'incident_id': newId,
+              'description': _descriptionController.text,
+            },
+          );
+        } catch (aiError) {
+          debugPrint("AI Triage failed: $aiError");
+          // Don't stop the whole process if AI fails
+        }
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
             content: Text(
-              "Report submitted successfully! The AI Agent is triaging your case.",
+              "Report submitted successfully! The Police Unit has been notified.",
             ),
             backgroundColor: Colors.green,
           ),
         );
-        // Go back to the User Dashboard
-        Navigator.pop(context);
+        Navigator.pop(context); // Return to Dashboard
       }
     } catch (e) {
       debugPrint("SUBMISSION ERROR: $e");
@@ -397,6 +519,8 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
 
   // --- STEP 2: Location Information (Matches Image 1) ---
   Widget _buildStep2() {
+    bool hasLocation = _capturedPosition != null;
+
     return Card(
       elevation: 2,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
@@ -410,55 +534,132 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 16),
+
+            // --- CAPTURE STATUS CARD ---
             Container(
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: const Color(0xFFFFF3E0),
+                color: hasLocation
+                    ? Colors.green.shade50
+                    : const Color(0xFFFFF3E0),
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.orange.shade200),
+                border: Border.all(
+                  color: hasLocation
+                      ? Colors.green.shade300
+                      : Colors.orange.shade200,
+                ),
               ),
               child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.location_off, color: Colors.orange.shade700),
+                      Icon(
+                        hasLocation ? Icons.check_circle : Icons.location_off,
+                        color: hasLocation
+                            ? Colors.green.shade700
+                            : Colors.orange.shade700,
+                      ),
                       const SizedBox(width: 10),
                       Text(
-                        _capturedPosition == null
-                            ? "Location not captured"
-                            : "Location Captured!",
+                        hasLocation
+                            ? "Location Captured!"
+                            : "Location not captured",
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
-                          color: Colors.orange.shade900,
+                          color: hasLocation
+                              ? Colors.green.shade900
+                              : Colors.orange.shade900,
                         ),
                       ),
                     ],
                   ),
                   const SizedBox(height: 8),
-                  const Text(
-                    "Please capture your location to see nearby police stations",
-                    style: TextStyle(fontSize: 13),
+                  Text(
+                    hasLocation
+                        ? "Coordinates: ${_latitude?.toStringAsFixed(6)}, ${_longitude?.toStringAsFixed(6)}"
+                        : "Please capture your location to see nearby police stations",
+                    style: const TextStyle(fontSize: 13),
                   ),
                   const SizedBox(height: 15),
-                  ElevatedButton.icon(
-                    onPressed: _isLocating ? null : _captureLocation,
-                    icon: _isLocating
-                        ? const SizedBox(
-                            width: 15,
-                            height: 15,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.gps_fixed, size: 18),
-                    label: const Text("Capture Location"),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF003366),
-                      foregroundColor: Colors.white,
-                      shape: const StadiumBorder(),
+                  Center(
+                    child: ElevatedButton.icon(
+                      onPressed: _isLocating ? null : _captureLocation,
+                      icon: _isLocating
+                          ? const SizedBox(
+                              width: 15,
+                              height: 15,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Icon(
+                              hasLocation ? Icons.refresh : Icons.gps_fixed,
+                              size: 18,
+                            ),
+                      label: Text(
+                        _isLocating
+                            ? "Locating..."
+                            : hasLocation
+                            ? "Recapture Location"
+                            : "Capture Location",
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF003366),
+                        foregroundColor: Colors.white,
+                        shape: const StadiumBorder(),
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
+
+            // --- POLICE STATION SELECTION (Shows after location captured) ---
+            if (hasLocation) ...[
+              const SizedBox(height: 20),
+              const Text(
+                "Forward to Police Station",
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              _isLoadingStations
+                  ? const Center(child: CircularProgressIndicator())
+                  : DropdownButtonFormField<String>(
+                      value: _selectedPoliceStationId,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(
+                          Icons.local_police,
+                          color: Color(0xFF003366),
+                        ),
+                      ),
+                      items: _policeStations.map((station) {
+                        return DropdownMenuItem<String>(
+                          value: station['id'].toString(),
+                          child: Text(
+                            station['name'].toString(),
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        );
+                      }).toList(),
+                      onChanged: (val) {
+                        setState(() {
+                          _selectedPoliceStationId = val;
+                          final matched = _policeStations.firstWhere(
+                            (s) => s['id'].toString() == val,
+                          );
+                          _selectedPoliceStationName = matched['name'];
+                        });
+                      },
+                    ),
+            ],
+
             const SizedBox(height: 25),
             const Text(
               "Additional Location Details",
