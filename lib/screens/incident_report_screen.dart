@@ -28,6 +28,10 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   List<Map<String, dynamic>> _policeStations = [];
   String? _selectedPoliceStationId;
   String? _selectedPoliceStationName;
+  final _villageController = TextEditingController(); // Added
+  final _landmarkController = TextEditingController(); // Added
+  final _witnessInfoController = TextEditingController();
+  final _additionalNotesController = TextEditingController();
 
   // --- Data for Step 1 ---
   String? _selectedIncidentType;
@@ -36,12 +40,9 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   TimeOfDay? _selectedTime;
 
   final _additionalLocationController = TextEditingController();
-  final _landmarkController = TextEditingController();
 
   // --- Data for Step 3 ---
   List<PlatformFile> _selectedFiles = [];
-  final _witnessInfoController = TextEditingController();
-  final _additionalNotesController = TextEditingController();
   bool _isLoading = false;
 
   final List<String> _crimeTypes = [
@@ -94,55 +95,97 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   }
 
   Future<void> _captureLocation() async {
-    setState(() => _isLocating = true);
+    setState(() {
+      _isLocating = true;
+      _locationAddress = "Fetching area name..."; // UI Feedback
+    });
+
     try {
-      // 1. Get raw coordinates (This works on Web)
       Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+        desiredAccuracy: LocationAccuracy.best,
       );
 
-      // 2. Get Place Name via OpenStreetMap (Web-safe alternative to geocoding package)
+      // OpenStreetMap Nominatim API
       final url = Uri.parse(
         'https://nominatim.openstreetmap.org/reverse?format=json&lat=${position.latitude}&lon=${position.longitude}&zoom=18&addressdetails=1',
       );
 
-      final response = await http.get(url, headers: {'Accept-Language': 'en'});
+      final response = await http.get(
+        url,
+        headers: {
+          'Accept-Language': 'en',
+          'User-Agent': 'SafeWatch_App_Uganda', // Required by Nominatim
+        },
+      );
 
-      String detectedDistrict = "Unknown District";
-      String displayName = "Unknown Location";
+      String village = "Unknown Area";
+      String district = "Unknown District";
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final address = data['address'];
+        final addr = data['address'] ?? {};
 
-        // Extract District/City and specific street/village
-        detectedDistrict =
-            address['city'] ??
-            address['town'] ??
-            address['county'] ??
-            "Unknown";
-        displayName = data['display_name'] ?? "Location captured";
+        // UGANDA SPECIFIC PARSING: Look for neighborhood levels
+        // Browsers often return 'suburb' for Kampala and 'village' for Kabale
+        village =
+            addr['suburb'] ??
+            addr['neighbourhood'] ??
+            addr['village'] ??
+            addr['hamlet'] ??
+            addr['town'] ??
+            "Unknown Area";
+
+        district =
+            addr['city'] ??
+            addr['county'] ??
+            addr['state'] ??
+            "Unknown District";
+
+        setState(() {
+          _capturedPosition = position;
+          _latitude = position.latitude;
+          _longitude = position.longitude;
+          _locationAddress = "$village, $district";
+        });
+
+        // Search for nearest stations
+        await _fetchProximityStations(position.latitude, position.longitude);
       }
-
-      setState(() {
-        _capturedPosition = position;
-        _latitude = position.latitude;
-        _longitude = position.longitude;
-        // Show the readable address from the API
-        _locationAddress = displayName;
-      });
-
-      // 3. Fetch Police Stations based on the name of the place
-      await _fetchNearbyStations(detectedDistrict);
     } catch (e) {
-      debugPrint("Location error: $e");
-      // Fallback: If geocoding fails, at least keep the numbers
+      debugPrint("Geocoding Error: $e");
       setState(() {
-        _locationAddress =
-            "Lat: ${_latitude?.toStringAsFixed(4)}, Lon: ${_longitude?.toStringAsFixed(4)}";
+        _locationAddress = "GPS Signal Set (Area name unavailable)";
       });
     } finally {
       setState(() => _isLocating = false);
+    }
+  }
+
+  Future<void> _fetchProximityStations(double lat, double lon) async {
+    setState(() => _isLoadingStations = true);
+    try {
+      final supabase = Supabase.instance.client;
+
+      // Call the SQL function we created in Step 1
+      final List<dynamic> data = await supabase.rpc(
+        'find_nearest_stations',
+        params: {'user_lat': lat, 'user_lon': lon},
+      );
+
+      final stations = List<Map<String, dynamic>>.from(data);
+
+      setState(() {
+        _policeStations = stations;
+        if (stations.isNotEmpty) {
+          // The database already sorted by distance, so index 0 is the closest
+          _selectedPoliceStationId = stations[0]['id'];
+          _selectedPoliceStationName = stations[0]['name'];
+        }
+      });
+    } catch (e) {
+      debugPrint("Proximity search error: $e");
+    } finally {
+      setState(() => _isLoadingStations = false);
     }
   }
 
@@ -517,7 +560,6 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     );
   }
 
-  // --- STEP 2: Location Information (Matches Image 1) ---
   Widget _buildStep2() {
     bool hasLocation = _capturedPosition != null;
 
@@ -528,6 +570,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min, // Added safety
           children: [
             const Text(
               "Location Information",
@@ -535,8 +578,9 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
             ),
             const SizedBox(height: 16),
 
-            // --- CAPTURE STATUS CARD ---
+            // Capture Status Box
             Container(
+              width: double.infinity, // Ensure full width
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: hasLocation
@@ -550,157 +594,116 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                 ),
               ),
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
                       Icon(
                         hasLocation ? Icons.check_circle : Icons.location_off,
-                        color: hasLocation
-                            ? Colors.green.shade700
-                            : Colors.orange.shade700,
+                        color: hasLocation ? Colors.green : Colors.orange,
                       ),
                       const SizedBox(width: 10),
                       Text(
                         hasLocation
                             ? "Location Captured!"
                             : "Location not captured",
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: hasLocation
-                              ? Colors.green.shade900
-                              : Colors.orange.shade900,
-                        ),
+                        style: const TextStyle(fontWeight: FontWeight.bold),
                       ),
                     ],
                   ),
                   const SizedBox(height: 8),
+                  // DISPLAY THE ADDRESS NAME HERE
                   Text(
-                    hasLocation
-                        ? "Coordinates: ${_latitude?.toStringAsFixed(6)}, ${_longitude?.toStringAsFixed(6)}"
-                        : "Please capture your location to see nearby police stations",
-                    style: const TextStyle(fontSize: 13),
+                    _locationAddress,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 13, color: Colors.black87),
                   ),
                   const SizedBox(height: 15),
-                  Center(
-                    child: ElevatedButton.icon(
-                      onPressed: _isLocating ? null : _captureLocation,
-                      icon: _isLocating
-                          ? const SizedBox(
-                              width: 15,
-                              height: 15,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 2,
-                                color: Colors.white,
-                              ),
-                            )
-                          : Icon(
-                              hasLocation ? Icons.refresh : Icons.gps_fixed,
-                              size: 18,
-                            ),
-                      label: Text(
-                        _isLocating
-                            ? "Locating..."
-                            : hasLocation
-                            ? "Recapture Location"
-                            : "Capture Location",
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF003366),
-                        foregroundColor: Colors.white,
-                        shape: const StadiumBorder(),
-                      ),
+                  ElevatedButton.icon(
+                    onPressed: _isLocating ? null : _captureLocation,
+                    icon: _isLocating
+                        ? const SizedBox(
+                            width: 15,
+                            height: 15,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.gps_fixed, size: 18),
+                    label: Text(
+                      _isLocating ? "Locating..." : "Capture Location",
+                    ),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFF003366),
+                      foregroundColor: Colors.white,
                     ),
                   ),
                 ],
               ),
             ),
 
-            // --- POLICE STATION SELECTION (Shows after location captured) ---
-            if (hasLocation) ...[
-              const SizedBox(height: 20),
-              const Text(
-                "Forward to Police Station",
-                style: TextStyle(fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-              _isLoadingStations
-                  ? const Center(child: CircularProgressIndicator())
-                  : DropdownButtonFormField<String>(
-                      value: _selectedPoliceStationId,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(
-                          Icons.local_police,
-                          color: Color(0xFF003366),
-                        ),
-                      ),
-                      items: _policeStations.map((station) {
-                        return DropdownMenuItem<String>(
-                          value: station['id'].toString(),
-                          child: Text(
-                            station['name'].toString(),
-                            style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.bold,
-                            ),
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        );
-                      }).toList(),
-                      onChanged: (val) {
-                        setState(() {
-                          _selectedPoliceStationId = val;
-                          final matched = _policeStations.firstWhere(
-                            (s) => s['id'].toString() == val,
-                          );
-                          _selectedPoliceStationName = matched['name'];
-                        });
-                      },
-                    ),
-            ],
-
             const SizedBox(height: 25),
             const Text(
-              "Additional Location Details",
+              "Forward to Police Station",
               style: TextStyle(fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
-            TextFormField(
-              controller: _additionalLocationController,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: "Provide any additional details...",
-              ),
-            ),
+
+            // DROPDOWN - Simplified to prevent render box errors
+            _isLoadingStations
+                ? const LinearProgressIndicator()
+                : DropdownButtonFormField<String>(
+                    isExpanded: true, // Crucial for Web
+                    value: _selectedPoliceStationId,
+                    decoration: const InputDecoration(
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.local_police),
+                    ),
+                    items: _policeStations.map((station) {
+                      return DropdownMenuItem<String>(
+                        value: station['id'].toString(),
+                        child: Text(
+                          "${station['name']} (${(station['distance_km'] ?? 0.0).toStringAsFixed(1)} km)",
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (val) {
+                      setState(() {
+                        _selectedPoliceStationId = val;
+                        _selectedPoliceStationName = _policeStations.firstWhere(
+                          (s) => s['id'].toString() == val,
+                        )['name'];
+                      });
+                    },
+                  ),
+
             const SizedBox(height: 20),
-            const Text(
-              "Landmark Reference (Optional)",
-              style: TextStyle(fontWeight: FontWeight.bold),
+            // Village Controller and Landmark Fields remain same...
+            _buildField(
+              _villageController,
+              "Village / Local Area Name",
+              Icons.home_work,
+              hint: "Specific village details",
             ),
-            const SizedBox(height: 8),
-            TextFormField(
-              controller: _landmarkController,
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: "e.g., Near Kabale University",
-              ),
+            _buildField(
+              _landmarkController,
+              "Landmark Reference",
+              Icons.location_city,
+              hint: "e.g. Near the mosque",
             ),
+
             const SizedBox(height: 30),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 OutlinedButton(
                   onPressed: () => setState(() => _currentStep = 1),
-                  style: OutlinedButton.styleFrom(shape: const StadiumBorder()),
                   child: const Text("Back"),
                 ),
                 ElevatedButton(
-                  onPressed: () => setState(() => _currentStep = 3),
+                  onPressed: hasLocation
+                      ? () => setState(() => _currentStep = 3)
+                      : null,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF003366),
-                    shape: const StadiumBorder(),
                   ),
                   child: const Text(
                     "Next",
@@ -981,6 +984,41 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildField(
+    TextEditingController controller,
+    String label,
+    IconData icon, {
+    String? hint,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+          ),
+          const SizedBox(height: 8),
+          TextFormField(
+            controller: controller,
+            decoration: InputDecoration(
+              hintText: hint,
+              prefixIcon: Icon(icon, color: const Color(0xFF003366)),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 12,
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
