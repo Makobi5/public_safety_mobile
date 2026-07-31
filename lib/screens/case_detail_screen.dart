@@ -324,7 +324,63 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
               ),
             ),
             const SizedBox(height: 25),
-
+            // --- NEW SECTION: LOCATION DETAILS ---
+            const Text(
+              "Incident Location",
+              style: TextStyle(
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF003366),
+              ),
+            ),
+            const SizedBox(height: 10),
+            Card(
+              elevation: 0,
+              color: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: Colors.grey.shade200),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  children: [
+                    // 1. Detected Address
+                    _buildLocationRow(
+                      Icons.location_on_rounded,
+                      "Area/Village:",
+                      widget.incident['location_address'] ?? "Unknown Area",
+                      Colors.red.shade700,
+                    ),
+                    const Divider(height: 20),
+                    // 2. Landmark
+                    _buildLocationRow(
+                      Icons.assistant_navigation,
+                      "Landmark:",
+                      widget.incident['landmark'] ?? "No landmark provided",
+                      const Color(0xFF003366),
+                    ),
+                    const Divider(height: 20),
+                    // 3. Raw GPS Coordinates
+                    _buildLocationRow(
+                      Icons.gps_fixed_rounded,
+                      "GPS Coords:",
+                      "${widget.incident['latitude']}, ${widget.incident['longitude']}",
+                      Colors.grey.shade700,
+                    ),
+                    const Divider(height: 20),
+                    // 4. Assigned Station
+                    _buildLocationRow(
+                      Icons.local_police_rounded,
+                      "Assigned To:",
+                      widget.incident['police_station_name'] ?? "Not routed",
+                      Colors.blue.shade800,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 25),
+            // --- END OF LOCATION SECTION ---
             // 3. CASE DESCRIPTION
             const Text(
               "Case Description",
@@ -577,6 +633,44 @@ class _CaseDetailScreenState extends State<CaseDetailScreen> {
           fontWeight: FontWeight.bold,
         ),
       ),
+    );
+  }
+
+  Widget _buildLocationRow(
+    IconData icon,
+    String label,
+    String value,
+    Color iconColor,
+  ) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 20, color: iconColor),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontSize: 12,
+                  color: Colors.grey,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              Text(
+                value,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.black87,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

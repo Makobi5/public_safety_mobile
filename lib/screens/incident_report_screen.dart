@@ -334,22 +334,21 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
         'incident_date': _selectedDate?.toIso8601String(),
         'incident_time': _selectedTime?.format(context),
 
-        // GPS Data
         'latitude': _capturedPosition!.latitude,
         'longitude': _capturedPosition!.longitude.toString(),
 
-        // Location text details
+        // --- FIXED THIS LINE ---
+        // If the user typed specific details, use those.
+        // Otherwise, use the automatically detected address (e.g., Bwerenga, Entebbe City)
         'location_address': _additionalLocationController.text.trim().isNotEmpty
-            ? _additionalLocationController.text.trim()
-            : 'GPS Location Captured',
-        'landmark': _landmarkController.text.trim(),
+            ? "${_additionalLocationController.text.trim()} (${_locationAddress})"
+            : _locationAddress,
 
-        // Routing to nearby station
+        'landmark': _landmarkController.text.trim(),
         'police_station_id': _selectedPoliceStationId,
         'police_station_name': _selectedPoliceStationName,
-
         'evidence_urls': uploadedUrls,
-        'status': 'Pending', // Using Capital P for consistency with Admin side
+        'status': 'Pending',
         'user_read': true,
       }).select(); // select() helps us get the ID back for the AI agent
 
