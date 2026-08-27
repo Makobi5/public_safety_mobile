@@ -5,6 +5,7 @@ import 'incident_report_screen.dart';
 import 'welcome_screen.dart';
 import 'user_profile_screen.dart';
 import 'user_case_detail_screen.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 class UserDashboard extends StatefulWidget {
   const UserDashboard({super.key});
@@ -124,6 +125,88 @@ class _UserDashboardState extends State<UserDashboard> {
     }
   }
 
+  // 1. The Container that holds all three cards
+  Widget _buildEmergencyContacts() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 15),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            "Uganda Police Emergency Numbers",
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 16,
+              color: Color(0xFF003366),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              _buildSOSCard("Police", "112", Icons.local_police, Colors.red),
+              _buildSOSCard("Fire", "112", Icons.fire_truck, Colors.orange),
+              _buildSOSCard(
+                "Ambulance",
+                "911",
+                Icons.medical_services,
+                Colors.blue,
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 2. The helper function that builds each individual card
+  Widget _buildSOSCard(String title, String num, IconData icon, Color color) {
+    // This calculates the width so 3 cards fit perfectly with 10px spacing
+    double cardWidth = (MediaQuery.of(context).size.width - 60) / 3;
+
+    return InkWell(
+      onTap: () async {
+        final Uri url = Uri.parse("tel:$num");
+        if (await canLaunchUrl(url)) {
+          await launchUrl(url);
+        }
+      },
+      child: Container(
+        width: cardWidth,
+        padding: const EdgeInsets.symmetric(vertical: 15),
+        decoration: BoxDecoration(
+          color: color.withOpacity(
+            0.1,
+          ), // Fixes the purple warning by providing standard opacity
+          borderRadius: BorderRadius.circular(15),
+          border: Border.all(color: color.withOpacity(0.3)),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 28),
+            const SizedBox(height: 8),
+            Text(
+              title,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.bold,
+                fontSize: 11,
+              ),
+            ),
+            Text(
+              num,
+              style: TextStyle(
+                color: color,
+                fontWeight: FontWeight.w900,
+                fontSize: 16,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -172,6 +255,7 @@ class _UserDashboardState extends State<UserDashboard> {
       ),
       body: Column(
         children: [
+          // 1. Header Section
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(20),
@@ -200,6 +284,7 @@ class _UserDashboardState extends State<UserDashboard> {
           ),
           const SizedBox(height: 20),
 
+          // 2. Report Button
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: ElevatedButton.icon(
@@ -225,8 +310,13 @@ class _UserDashboardState extends State<UserDashboard> {
               ),
             ),
           ),
-          const SizedBox(height: 20),
 
+          // 3. STEP 2: EMERGENCY HOTLINES (Added as per Document)
+          _buildEmergencyContacts(),
+
+          const SizedBox(height: 10),
+
+          // 4. Stats Row
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 20),
             child: Row(
@@ -266,6 +356,7 @@ class _UserDashboardState extends State<UserDashboard> {
             ),
           ),
 
+          // 5. Scrollable Reports List
           Expanded(
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
@@ -292,8 +383,6 @@ class _UserDashboardState extends State<UserDashboard> {
                     itemCount: _myIncidents.length,
                     itemBuilder: (context, index) {
                       final incident = _myIncidents[index];
-
-                      // SAFE DATA EXTRACTION
                       final String type =
                           incident['incident_type']?.toString() ?? "Unknown";
                       final String status =
@@ -301,8 +390,6 @@ class _UserDashboardState extends State<UserDashboard> {
                       final String createdAt =
                           incident['created_at']?.toString() ??
                           DateTime.now().toIso8601String();
-
-                      // --- STEP 4 CHANGE: CHECK FOR UNREAD STATUS ---
                       final bool isUnread = incident['user_read'] == false;
 
                       String formattedDate = "N/A";
@@ -328,15 +415,8 @@ class _UserDashboardState extends State<UserDashboard> {
                                 builder: (context) =>
                                     UserCaseDetailScreen(incident: incident),
                               ),
-                            ).then((_) {
-                              // This MUST be inside the .then() block
-                              debugPrint(
-                                "Returning to dashboard, refreshing list...",
-                              );
-                              _loadDashboardData();
-                            });
+                            ).then((_) => _loadDashboardData());
                           },
-                          // --- STEP 4 CHANGE: ADDED NOTIFICATION DOT TO LEADING ---
                           leading: Stack(
                             children: [
                               CircleAvatar(
@@ -370,7 +450,6 @@ class _UserDashboardState extends State<UserDashboard> {
                                 ),
                             ],
                           ),
-                          // --- STEP 4 CHANGE: ADDED "UPDATED" BADGE TO TITLE ---
                           title: Row(
                             children: [
                               Expanded(

@@ -149,7 +149,15 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
         });
 
         // Search for nearest stations
-        await _fetchProximityStations(position.latitude, position.longitude);
+        final String districtOnly = district
+            .split(',')
+            .last
+            .trim(); // Get just "Entebbe" or "Wakiso"
+        await _fetchProximityStations(
+          position.latitude,
+          position.longitude,
+          districtOnly,
+        );
       }
     } catch (e) {
       debugPrint("Geocoding Error: $e");
@@ -161,7 +169,11 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     }
   }
 
-  Future<void> _fetchProximityStations(double lat, double lon) async {
+  Future<void> _fetchProximityStations(
+    double lat,
+    double lon,
+    String district,
+  ) async {
     setState(() => _isLoadingStations = true);
     try {
       final supabase = Supabase.instance.client;
@@ -169,7 +181,11 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
       // Call the SQL function we created in Step 1
       final List<dynamic> data = await supabase.rpc(
         'find_nearest_stations',
-        params: {'user_lat': lat, 'user_lon': lon},
+        params: {
+          'user_lat': lat,
+          'user_lon': lon,
+          'detected_district': district,
+        },
       );
 
       final stations = List<Map<String, dynamic>>.from(data);
@@ -569,7 +585,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min, // Added safety
+          mainAxisSize: MainAxisSize.min,
           children: [
             const Text(
               "Location Information",
@@ -577,9 +593,9 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
             ),
             const SizedBox(height: 16),
 
-            // Capture Status Box
+            // 1. CAPTURE STATUS BOX
             Container(
-              width: double.infinity, // Ensure full width
+              width: double.infinity,
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
                 color: hasLocation
@@ -610,7 +626,6 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                     ],
                   ),
                   const SizedBox(height: 8),
-                  // DISPLAY THE ADDRESS NAME HERE
                   Text(
                     _locationAddress,
                     textAlign: TextAlign.center,
@@ -623,15 +638,26 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                         ? const SizedBox(
                             width: 15,
                             height: 15,
-                            child: CircularProgressIndicator(strokeWidth: 2),
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
                           )
-                        : const Icon(Icons.gps_fixed, size: 18),
+                        : Icon(
+                            hasLocation ? Icons.refresh : Icons.gps_fixed,
+                            size: 18,
+                          ),
                     label: Text(
-                      _isLocating ? "Locating..." : "Capture Location",
+                      _isLocating
+                          ? "Locating..."
+                          : hasLocation
+                          ? "Recapture Location"
+                          : "Capture Location",
                     ),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: const Color(0xFF003366),
                       foregroundColor: Colors.white,
+                      shape: const StadiumBorder(),
                     ),
                   ),
                 ],
@@ -645,22 +671,52 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
             ),
             const SizedBox(height: 8),
 
-            // DROPDOWN - Simplified to prevent render box errors
+            // 2. SMART PROXIMITY DROPDOWN (Name + Distance + Phone)
             _isLoadingStations
-                ? const LinearProgressIndicator()
+                ? const LinearProgressIndicator(color: Color(0xFF003366))
                 : DropdownButtonFormField<String>(
-                    isExpanded: true, // Crucial for Web
+                    isExpanded: true,
+                    // 1. Give the dropdown plenty of height to override the 24px constraint
+                    itemHeight: 80,
                     value: _selectedPoliceStationId,
-                    decoration: const InputDecoration(
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.local_police),
+                    decoration: InputDecoration(
+                      labelText: "Nearest Police Station",
+                      labelStyle: const TextStyle(
+                        color: Color(0xFF003366),
+                        fontWeight: FontWeight.bold,
+                      ),
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(
+                        Icons.local_police,
+                        color: Color(0xFF003366),
+                      ),
+                      // 2. Reduce internal padding to nearly zero to stop the "squeezing" effect
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 0,
+                      ),
+                      filled: true,
+                      fillColor: Colors.white,
                     ),
+                    hint: const Text("Select nearest station"),
                     items: _policeStations.map((station) {
+                      final String phone =
+                          station['phone_number'] ?? "No contact";
+                      final double dist = station['distance_km'] ?? 0.0;
+
                       return DropdownMenuItem<String>(
                         value: station['id'].toString(),
+                        // 3. CRITICAL: Use a single Text widget with \n instead of a Column.
+                        // This prevents the RenderFlex error because it's no longer a "Flex" box.
                         child: Text(
-                          "${station['name']} (${(station['distance_km'] ?? 0.0).toStringAsFixed(1)} km)",
-                          style: const TextStyle(fontSize: 12),
+                          "${station['name']} (${dist.toStringAsFixed(1)} km)\nContact: $phone",
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.black87,
+                            height: 1.3, // Adds spacing between the two lines
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       );
                     }).toList(),
@@ -675,7 +731,8 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                   ),
 
             const SizedBox(height: 20),
-            // Village Controller and Landmark Fields remain same...
+
+            // 3. EXTRA FIELDS
             _buildField(
               _villageController,
               "Village / Local Area Name",
@@ -690,11 +747,14 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
             ),
 
             const SizedBox(height: 30),
+
+            // 4. NAVIGATION BUTTONS
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 OutlinedButton(
                   onPressed: () => setState(() => _currentStep = 1),
+                  style: OutlinedButton.styleFrom(shape: const StadiumBorder()),
                   child: const Text("Back"),
                 ),
                 ElevatedButton(
@@ -703,11 +763,11 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                       : null,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xFF003366),
+                    foregroundColor: Colors.white,
+                    shape: const StadiumBorder(),
+                    minimumSize: const Size(120, 45),
                   ),
-                  child: const Text(
-                    "Next",
-                    style: TextStyle(color: Colors.white),
-                  ),
+                  child: const Text("Next"),
                 ),
               ],
             ),
