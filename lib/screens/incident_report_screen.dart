@@ -26,6 +26,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   double? _longitude;
   bool _isLoadingStations = false;
   List<Map<String, dynamic>> _policeStations = [];
+  String? _stationLoadError;
   String? _selectedPoliceStationId;
   String? _selectedPoliceStationName;
   final _villageController = TextEditingController(); // Added
@@ -97,76 +98,179 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   Future<void> _captureLocation() async {
     setState(() {
       _isLocating = true;
-      _locationAddress = "Fetching area name..."; // UI Feedback
+      _locationAddress = _capturedPosition == null
+          ? "Getting GPS coordinates..."
+          : "Refreshing GPS coordinates...";
     });
 
     try {
-      Position position = await Geolocator.getCurrentPosition(
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        throw Exception("Location services are disabled.");
+      }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        throw Exception("Location permission was not granted.");
+      }
+
+      final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.best,
+        timeLimit: const Duration(seconds: 30),
       );
 
-      // OpenStreetMap Nominatim API
-      final url = Uri.parse(
-        'https://nominatim.openstreetmap.org/reverse?format=json&lat=${position.latitude}&lon=${position.longitude}&zoom=18&addressdetails=1',
+      if (!mounted) return;
+      setState(() {
+        _capturedPosition = position;
+        _latitude = position.latitude;
+        _longitude = position.longitude;
+        _locationAddress = "Coordinates captured; looking up area name...";
+        _isLoadingStations = true;
+        _stationLoadError = null;
+        _policeStations = [];
+        _selectedPoliceStationId = null;
+        _selectedPoliceStationName = null;
+      });
+
+      var district = '';
+      try {
+        final area = await _reverseGeocode(position);
+        district = area['district'] ?? '';
+        if (mounted) {
+          setState(() {
+            final village = area['area'];
+            _locationAddress = village == null
+                ? (district.isEmpty ? "Area name unavailable" : district)
+                : district.isEmpty ||
+                      village.toLowerCase() == district.toLowerCase()
+                ? village
+                : "$village, $district";
+          });
+        }
+      } catch (error) {
+        debugPrint("Reverse geocoding failed: $error");
+        if (mounted) {
+          setState(() {
+            _locationAddress =
+                "GPS coordinates captured (area name unavailable)";
+          });
+        }
+      }
+
+      await _fetchProximityStations(
+        position.latitude,
+        position.longitude,
+        district,
       );
-
-      final response = await http.get(
-        url,
-        headers: {
-          'Accept-Language': 'en',
-          'User-Agent': 'SafeWatch_App_Uganda', // Required by Nominatim
-        },
-      );
-
-      String village = "Unknown Area";
-      String district = "Unknown District";
-
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final addr = data['address'] ?? {};
-
-        // UGANDA SPECIFIC PARSING: Look for neighborhood levels
-        // Browsers often return 'suburb' for Kampala and 'village' for Kabale
-        village =
-            addr['suburb'] ??
-            addr['neighbourhood'] ??
-            addr['village'] ??
-            addr['hamlet'] ??
-            addr['town'] ??
-            "Unknown Area";
-
-        district =
-            addr['city'] ??
-            addr['county'] ??
-            addr['state'] ??
-            "Unknown District";
-
+    } catch (e) {
+      debugPrint("Location capture failed: $e");
+      if (mounted) {
         setState(() {
-          _capturedPosition = position;
-          _latitude = position.latitude;
-          _longitude = position.longitude;
-          _locationAddress = "$village, $district";
+          _locationAddress = _capturedPosition == null
+              ? "Unable to get GPS coordinates"
+              : "Previous GPS location retained (refresh failed)";
         });
-
-        // Search for nearest stations
-        final String districtOnly = district
-            .split(',')
-            .last
-            .trim(); // Get just "Entebbe" or "Wakiso"
-        await _fetchProximityStations(
-          position.latitude,
-          position.longitude,
-          districtOnly,
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              "Could not capture your location: ${e.toString().replaceFirst('Exception: ', '')}",
+            ),
+          ),
         );
       }
-    } catch (e) {
-      debugPrint("Geocoding Error: $e");
-      setState(() {
-        _locationAddress = "GPS Signal Set (Area name unavailable)";
-      });
     } finally {
-      setState(() => _isLocating = false);
+      if (mounted) setState(() => _isLocating = false);
     }
+  }
+
+  Future<Map<String, String?>> _reverseGeocode(Position position) async {
+    if (!kIsWeb) {
+      try {
+        final placemarks = await placemarkFromCoordinates(
+          position.latitude,
+          position.longitude,
+        );
+        if (placemarks.isNotEmpty) {
+          final placemark = placemarks.first;
+          final area = _firstNonEmpty([
+            placemark.subLocality,
+            placemark.locality,
+            placemark.name,
+          ]);
+          final district = _firstNonEmpty([
+            placemark.subAdministrativeArea,
+            placemark.administrativeArea,
+          ]);
+          if (area != null || district != null) {
+            return {'area': area, 'district': district};
+          }
+        }
+      } catch (error) {
+        debugPrint("Platform reverse geocoding failed: $error");
+      }
+    }
+
+    // Photon allows browser cross-origin requests, unlike the Nominatim call
+    // that failed in Flutter Web with "ClientException: Failed to fetch".
+    final uri = Uri.https('photon.komoot.io', '/reverse', {
+      'lat': position.latitude.toString(),
+      'lon': position.longitude.toString(),
+      'lang': 'en',
+    });
+    final response = await http
+        .get(uri, headers: {'Accept': 'application/json'})
+        .timeout(const Duration(seconds: 12));
+    if (response.statusCode != 200) {
+      throw Exception('Reverse geocoder returned HTTP ${response.statusCode}');
+    }
+
+    final decoded = jsonDecode(response.body);
+    if (decoded is! Map<String, dynamic>) {
+      throw const FormatException('Invalid reverse geocoder response');
+    }
+    final features = decoded['features'];
+    if (features is! List || features.isEmpty || features.first is! Map) {
+      throw const FormatException('No address found for these coordinates');
+    }
+    final feature = features.first as Map;
+    final properties = feature['properties'];
+    if (properties is! Map) {
+      throw const FormatException('Reverse geocoder returned no address');
+    }
+    final address = Map<String, dynamic>.from(properties);
+    final area = _firstAddressValue(address, [
+      'suburb',
+      'neighbourhood',
+      'village',
+      'hamlet',
+      'locality',
+      'name',
+      'town',
+      'city',
+    ]);
+    final district = _firstAddressValue(address, [
+      'district',
+      'county',
+      'city',
+      'state',
+    ]);
+    if (area == null && district == null) {
+      throw const FormatException('Reverse geocoder returned no area name');
+    }
+    return {'area': area, 'district': district};
+  }
+
+  String? _firstAddressValue(Map<String, dynamic> address, List<String> keys) =>
+      _firstNonEmpty(keys.map((key) => address[key]?.toString()));
+
+  String? _firstNonEmpty(Iterable<String?> values) {
+    for (final value in values) {
+      final trimmed = value?.trim();
+      if (trimmed != null && trimmed.isNotEmpty) return trimmed;
+    }
+    return null;
   }
 
   Future<void> _fetchProximityStations(
@@ -174,75 +278,134 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     double lon,
     String district,
   ) async {
-    setState(() => _isLoadingStations = true);
+    if (mounted) {
+      setState(() {
+        _isLoadingStations = true;
+        _stationLoadError = null;
+      });
+    }
     try {
       final supabase = Supabase.instance.client;
 
-      // Call the SQL function we created in Step 1
-      final List<dynamic> data = await supabase.rpc(
-        'find_nearest_stations',
-        params: {
-          'user_lat': lat,
-          'user_lon': lon,
-          'detected_district': district,
-        },
-      );
+      List<Map<String, dynamic>> stations;
+      try {
+        final data = await supabase.rpc(
+          'find_nearest_stations',
+          params: {
+            'user_lat': lat,
+            'user_lon': lon,
+            'detected_district': district.isEmpty ? null : district,
+          },
+        );
+        stations = _sortStationsByDistance(
+          List<Map<String, dynamic>>.from(data),
+          lat,
+          lon,
+        );
+      } catch (error) {
+        debugPrint(
+          "Proximity RPC failed; calculating distance locally: $error",
+        );
+        stations = await _loadAndSortStations(lat, lon);
+      }
 
-      final stations = List<Map<String, dynamic>>.from(data);
-
-      setState(() {
-        _policeStations = stations;
-        if (stations.isNotEmpty) {
-          // The database already sorted by distance, so index 0 is the closest
-          _selectedPoliceStationId = stations[0]['id'];
-          _selectedPoliceStationName = stations[0]['name'];
-        }
-      });
+      if (stations.isEmpty) {
+        stations = await _loadAndSortStations(lat, lon);
+      }
+      if (mounted) {
+        setState(() {
+          _policeStations = stations;
+          _selectedPoliceStationId = stations.isEmpty
+              ? null
+              : stations.first['id']?.toString();
+          _selectedPoliceStationName = stations.isEmpty
+              ? null
+              : stations.first['name']?.toString();
+          if (stations.isEmpty) {
+            _stationLoadError =
+                "No police stations with coordinates are available.";
+          }
+        });
+      }
     } catch (e) {
       debugPrint("Proximity search error: $e");
+      if (mounted) {
+        setState(() {
+          _policeStations = [];
+          _selectedPoliceStationId = null;
+          _selectedPoliceStationName = null;
+          _stationLoadError = "Could not load nearby police stations.";
+        });
+      }
     } finally {
-      setState(() => _isLoadingStations = false);
+      if (mounted) setState(() => _isLoadingStations = false);
     }
   }
 
-  Future<void> _fetchNearbyStations(String districtName) async {
-    setState(() => _isLoadingStations = true);
-    try {
-      final supabase = Supabase.instance.client;
-
-      // Search for stations matching the detected district
-      final data = await supabase
-          .from('police_stations')
-          .select()
-          .ilike('district', '%$districtName%');
-
-      final stations = List<Map<String, dynamic>>.from(data);
-
-      setState(() {
-        _policeStations = stations;
-        if (stations.isNotEmpty) {
-          _selectedPoliceStationId = stations[0]['id'];
-          _selectedPoliceStationName = stations[0]['name'];
-        } else {
-          // If no local station found, show all as fallback (like Kabale)
-          _loadAllStationsFallback();
-        }
-      });
-    } catch (e) {
-      debugPrint("Station error: $e");
-    } finally {
-      setState(() => _isLoadingStations = false);
-    }
-  }
-
-  // Helper to load all stations if current district has none in DB
-  Future<void> _loadAllStationsFallback() async {
+  Future<List<Map<String, dynamic>>> _loadAndSortStations(
+    double lat,
+    double lon,
+  ) async {
     final data = await Supabase.instance.client
         .from('police_stations')
         .select();
-    setState(() {
-      _policeStations = List<Map<String, dynamic>>.from(data);
-    });
+    return _sortStationsByDistance(
+      List<Map<String, dynamic>>.from(data),
+      lat,
+      lon,
+    );
+  }
+
+  List<Map<String, dynamic>> _sortStationsByDistance(
+    List<Map<String, dynamic>> stations,
+    double lat,
+    double lon,
+  ) {
+    final withDistance = <Map<String, dynamic>>[];
+    for (final station in stations) {
+      final stationLat = _stationCoordinate(station, ['latitude', 'lat']);
+      final stationLon = _stationCoordinate(station, [
+        'longitude',
+        'lng',
+        'lon',
+        'long',
+      ]);
+      final suppliedDistance = _stationCoordinate(station, ['distance_km']);
+      double? distanceKm;
+      if (stationLat != null &&
+          stationLon != null &&
+          stationLat >= -90 &&
+          stationLat <= 90 &&
+          stationLon >= -180 &&
+          stationLon <= 180) {
+        distanceKm =
+            Geolocator.distanceBetween(lat, lon, stationLat, stationLon) / 1000;
+      } else if (suppliedDistance != null &&
+          suppliedDistance.isFinite &&
+          suppliedDistance >= 0) {
+        distanceKm = suppliedDistance;
+      }
+      if (distanceKm == null || !distanceKm.isFinite || station['id'] == null) {
+        continue;
+      }
+      withDistance.add({...station, 'distance_km': distanceKm});
+    }
+    withDistance.sort(
+      (first, second) => (first['distance_km'] as double).compareTo(
+        second['distance_km'] as double,
+      ),
+    );
+    return withDistance;
+  }
+
+  double? _stationCoordinate(Map<String, dynamic> station, List<String> keys) {
+    for (final key in keys) {
+      final value = station[key];
+      if (value is num) return value.toDouble();
+      final parsed = double.tryParse(value?.toString() ?? '');
+      if (parsed != null) return parsed;
+    }
+    return null;
   }
 
   Future<void> _pickFiles() async {
@@ -275,6 +438,17 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   }
 
   Future<void> _submitReport() async {
+    if (_isLocating || _isLoadingStations) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            "Please wait while your location and nearest station are being determined.",
+          ),
+        ),
+      );
+      return;
+    }
+
     // 1. Validation Check
     if (_selectedIncidentType == null || _descriptionController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -631,6 +805,11 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                     textAlign: TextAlign.center,
                     style: const TextStyle(fontSize: 13, color: Colors.black87),
                   ),
+                  if (hasLocation)
+                    const Text(
+                      "Area data © OpenStreetMap contributors",
+                      style: TextStyle(fontSize: 10, color: Colors.black54),
+                    ),
                   const SizedBox(height: 15),
                   ElevatedButton.icon(
                     onPressed: _isLocating ? null : _captureLocation,
@@ -700,20 +879,23 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                     ),
                     hint: const Text("Select nearest station"),
                     items: _policeStations.map((station) {
-                      final String phone =
-                          station['phone_number'] ?? "No contact";
-                      final double dist = station['distance_km'] ?? 0.0;
+                      final phone =
+                          station['phone_number']?.toString() ?? "No contact";
+                      final distance = _stationCoordinate(station, [
+                        'distance_km',
+                      ]);
+                      final distanceLabel = distance == null
+                          ? "Distance unavailable"
+                          : "${distance.toStringAsFixed(1)} km";
 
                       return DropdownMenuItem<String>(
                         value: station['id'].toString(),
-                        // 3. CRITICAL: Use a single Text widget with \n instead of a Column.
-                        // This prevents the RenderFlex error because it's no longer a "Flex" box.
                         child: Text(
-                          "${station['name']} (${dist.toStringAsFixed(1)} km)\nContact: $phone",
+                          "${station['name']} ($distanceLabel)\nContact: $phone",
                           style: const TextStyle(
                             fontSize: 12,
                             color: Colors.black87,
-                            height: 1.3, // Adds spacing between the two lines
+                            height: 1.3,
                           ),
                           maxLines: 2,
                           overflow: TextOverflow.ellipsis,
@@ -729,6 +911,13 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                       });
                     },
                   ),
+            if (_stationLoadError != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                _stationLoadError!,
+                style: TextStyle(color: Theme.of(context).colorScheme.error),
+              ),
+            ],
 
             const SizedBox(height: 20),
 

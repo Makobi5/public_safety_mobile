@@ -33,6 +33,7 @@ dependencies:
   # Backend & Auth
   supabase_flutter: ^2.8.0
   flutter_dotenv: ^5.1.0
+  http: ^1.6.0
   # Location & Maps
   geolocator: ^10.1.0
   geocoding: ^2.1.1
