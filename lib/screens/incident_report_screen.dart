@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:geolocator/geolocator.dart';
+import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'dart:io';
 import 'package:flutter/foundation.dart' show kIsWeb;
@@ -20,6 +21,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
   int _currentStep = 1;
   final _formKey = GlobalKey<FormState>();
   Position? _capturedPosition;
+  String? _autoDetectedVillage;
   bool _isLocating = false;
   String _locationAddress = "Location not captured yet";
   double? _latitude;
@@ -116,10 +118,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
         throw Exception("Location permission was not granted.");
       }
 
-      final position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.best,
-        timeLimit: const Duration(seconds: 30),
-      );
+      final position = await _getBestLocationFix();
 
       if (!mounted) return;
       setState(() {
@@ -141,6 +140,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
         if (mounted) {
           setState(() {
             final village = area['area'];
+            if (village != null) _updateDetectedVillage(village);
             _locationAddress = village == null
                 ? (district.isEmpty ? "Area name unavailable" : district)
                 : district.isEmpty ||
@@ -185,7 +185,119 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
     }
   }
 
+  Future<Position> _getBestLocationFix() async {
+    Position? bestPosition;
+    final startedAt = DateTime.now();
+
+    try {
+      await for (final candidate in Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          distanceFilter: 0,
+        ),
+      ).timeout(const Duration(seconds: 18))) {
+        if (DateTime.now().difference(startedAt) >=
+            const Duration(seconds: 12)) {
+          break;
+        }
+
+        final age = DateTime.now().difference(candidate.timestamp).abs();
+        if (!candidate.accuracy.isFinite ||
+            candidate.accuracy < 0 ||
+            candidate.accuracy > 1000 ||
+            age > const Duration(seconds: 30)) {
+          continue;
+        }
+
+        if (bestPosition == null ||
+            candidate.accuracy < bestPosition.accuracy) {
+          bestPosition = candidate;
+          if (mounted) {
+            setState(() {
+              _locationAddress =
+                  "Improving GPS accuracy (±${candidate.accuracy.round()} m)...";
+            });
+          }
+        }
+
+        if (candidate.accuracy <= 10) break;
+      }
+    } on TimeoutException {
+      debugPrint("GPS stream timed out; using the best available fix.");
+    } catch (error) {
+      debugPrint("GPS position stream failed: $error");
+      if (bestPosition == null) {
+        return Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.bestForNavigation,
+          timeLimit: const Duration(seconds: 25),
+        );
+      }
+    }
+
+    if (bestPosition != null) return bestPosition;
+    return Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.bestForNavigation,
+      timeLimit: const Duration(seconds: 25),
+    );
+  }
+
   Future<Map<String, String?>> _reverseGeocode(Position position) async {
+    try {
+      final uri = Uri.https('nominatim.openstreetmap.org', '/reverse', {
+        'format': 'jsonv2',
+        'lat': position.latitude.toString(),
+        'lon': position.longitude.toString(),
+        'zoom': '18',
+        'addressdetails': '1',
+        'accept-language': 'en',
+      });
+      final response = await http
+          .get(
+            uri,
+            headers: kIsWeb
+                ? const {'Accept': 'application/json'}
+                : const {
+                    'Accept': 'application/json',
+                    'User-Agent': 'CommunitySafeWatch/1.0',
+                  },
+          )
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode != 200) {
+        throw Exception('Nominatim returned HTTP ${response.statusCode}');
+      }
+      final decoded = jsonDecode(response.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Invalid Nominatim response');
+      }
+      final rawAddress = decoded['address'];
+      if (rawAddress is! Map) {
+        throw const FormatException('Nominatim returned no address details');
+      }
+      final address = Map<String, dynamic>.from(rawAddress);
+      final area = _firstAddressValue(address, [
+        'village',
+        'hamlet',
+        'suburb',
+        'neighbourhood',
+        'city_district',
+        'quarter',
+        'town',
+        'city',
+      ]);
+      final district = _firstAddressValue(address, [
+        'city',
+        'county',
+        'state_district',
+        'state',
+      ]);
+      if (area == null && district == null) {
+        throw const FormatException('Nominatim returned no area name');
+      }
+      return {'area': area, 'district': district};
+    } catch (error) {
+      debugPrint("Nominatim reverse geocoding failed: $error");
+    }
+
     if (!kIsWeb) {
       try {
         final placemarks = await placemarkFromCoordinates(
@@ -197,7 +309,6 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
           final area = _firstNonEmpty([
             placemark.subLocality,
             placemark.locality,
-            placemark.name,
           ]);
           final district = _firstNonEmpty([
             placemark.subAdministrativeArea,
@@ -240,16 +351,31 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
       throw const FormatException('Reverse geocoder returned no address');
     }
     final address = Map<String, dynamic>.from(properties);
-    final area = _firstAddressValue(address, [
+    var area = _firstAddressValue(address, [
       'suburb',
       'neighbourhood',
       'village',
       'hamlet',
+      'quarter',
       'locality',
-      'name',
       'town',
       'city',
     ]);
+    final placeType = address['osm_value']?.toString().toLowerCase();
+    if (area == null &&
+        address['osm_key']?.toString().toLowerCase() == 'place' &&
+        const {
+          'city',
+          'town',
+          'village',
+          'hamlet',
+          'suburb',
+          'neighbourhood',
+          'quarter',
+          'locality',
+        }.contains(placeType)) {
+      area = _firstAddressValue(address, ['name']);
+    }
     final district = _firstAddressValue(address, [
       'district',
       'county',
@@ -260,6 +386,17 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
       throw const FormatException('Reverse geocoder returned no area name');
     }
     return {'area': area, 'district': district};
+  }
+
+  void _updateDetectedVillage(String village) {
+    final currentValue = _villageController.text.trim();
+    if (currentValue.isNotEmpty && currentValue != _autoDetectedVillage) return;
+
+    _autoDetectedVillage = village;
+    _villageController.value = TextEditingValue(
+      text: village,
+      selection: TextSelection.collapsed(offset: village.length),
+    );
   }
 
   String? _firstAddressValue(Map<String, dynamic> address, List<String> keys) =>
@@ -517,6 +654,13 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
       }
 
       // 4. SAVE DATA TO 'incidents' TABLE (Including GPS and Station)
+      final villageName = _villageController.text.trim();
+      final additionalLocation = _additionalLocationController.text.trim();
+      final reportedAddress = [
+        if (villageName.isNotEmpty) 'Village: $villageName',
+        if (additionalLocation.isNotEmpty) additionalLocation,
+        _locationAddress,
+      ].join(' | ');
       final response = await supabase.from('incidents').insert({
         'user_id': user.id,
         'incident_type': _selectedIncidentType,
@@ -530,9 +674,7 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
         // --- FIXED THIS LINE ---
         // If the user typed specific details, use those.
         // Otherwise, use the automatically detected address (e.g., Bwerenga, Entebbe City)
-        'location_address': _additionalLocationController.text.trim().isNotEmpty
-            ? "${_additionalLocationController.text.trim()} (${_locationAddress})"
-            : _locationAddress,
+        'location_address': reportedAddress,
 
         'landmark': _landmarkController.text.trim(),
         'police_station_id': _selectedPoliceStationId,
@@ -801,10 +943,42 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    _locationAddress,
+                    hasLocation
+                        ? "Mapped address: $_locationAddress"
+                        : _locationAddress,
                     textAlign: TextAlign.center,
                     style: const TextStyle(fontSize: 13, color: Colors.black87),
                   ),
+                  if (hasLocation) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      _capturedPosition!.accuracy > 100
+                          ? "Approximate location (±${_capturedPosition!.accuracy.round()} m). Enable precise location for this site in your browser/device settings, then recapture. Confirm the village below."
+                          : _capturedPosition!.accuracy <= 25
+                          ? "GPS accuracy about ±${_capturedPosition!.accuracy.round()} m"
+                          : "GPS accuracy about ±${_capturedPosition!.accuracy.round()} m — recapture outdoors for better precision",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: _capturedPosition!.accuracy <= 25
+                            ? Colors.black54
+                            : Colors.deepOrange.shade700,
+                      ),
+                    ),
+                    Text(
+                      "${_capturedPosition!.latitude.toStringAsFixed(6)}, ${_capturedPosition!.longitude.toStringAsFixed(6)}",
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 10,
+                        color: Colors.black54,
+                      ),
+                    ),
+                    const Text(
+                      "Area names follow mapped boundaries and may be approximate.",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 10, color: Colors.black54),
+                    ),
+                  ],
                   if (hasLocation)
                     const Text(
                       "Area data © OpenStreetMap contributors",
@@ -924,9 +1098,9 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
             // 3. EXTRA FIELDS
             _buildField(
               _villageController,
-              "Village / Local Area Name",
+              "Village / Local Area Name (confirm or correct)",
               Icons.home_work,
-              hint: "Specific village details",
+              hint: "Check the detected village or enter the correct one",
             ),
             _buildField(
               _landmarkController,
