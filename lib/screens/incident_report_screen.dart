@@ -448,6 +448,8 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
 
       if (stations.isEmpty) {
         stations = await _loadAndSortStations(lat, lon);
+      } else {
+        stations = await _includeMissingStationContacts(stations);
       }
       if (mounted) {
         setState(() {
@@ -476,6 +478,47 @@ class _IncidentReportScreenState extends State<IncidentReportScreen> {
       }
     } finally {
       if (mounted) setState(() => _isLoadingStations = false);
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _includeMissingStationContacts(
+    List<Map<String, dynamic>> stations,
+  ) async {
+    final missingPhoneStations = stations
+        .where(
+          (station) =>
+              station['phone_number'] == null ||
+              station['phone_number'].toString().trim().isEmpty,
+        )
+        .toList();
+    if (missingPhoneStations.isEmpty) return stations;
+
+    final ids = missingPhoneStations
+        .map((station) => station['id'])
+        .whereType<Object>()
+        .toList();
+    if (ids.isEmpty) return stations;
+
+    try {
+      final rows = await Supabase.instance.client
+          .from('police_stations')
+          .select('id, phone_number')
+          .inFilter('id', ids);
+      final phonesById = {
+        for (final row in rows) row['id'].toString(): row['phone_number'],
+      };
+      return [
+        for (final station in stations)
+          {
+            ...station,
+            if (station['phone_number'] == null ||
+                station['phone_number'].toString().trim().isEmpty)
+              'phone_number': phonesById[station['id']?.toString()],
+          },
+      ];
+    } catch (error) {
+      debugPrint("Could not load police station contact details: $error");
+      return stations;
     }
   }
 
