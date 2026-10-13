@@ -503,11 +503,21 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ],
         ),
         subtitle: Text(
-          "${DateFormat('HH:mm').format(date)} • ${incident['village'] ?? 'Unknown Location'}",
+          "${DateFormat('HH:mm').format(date)} • ${_incidentLocationLabel(incident)}",
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
         ),
         trailing: const Icon(Icons.chevron_right, size: 20, color: Colors.grey),
       ),
     );
+  }
+
+  String _incidentLocationLabel(Map<String, dynamic> incident) {
+    for (final key in ['location_address', 'village']) {
+      final value = incident[key]?.toString().trim();
+      if (value != null && value.isNotEmpty) return value;
+    }
+    return 'Unknown Location';
   }
 
   Widget _buildDrawer() {
