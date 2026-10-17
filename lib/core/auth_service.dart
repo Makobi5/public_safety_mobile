@@ -50,12 +50,27 @@ class AuthService {
     final user = _supabase.auth.currentUser;
     if (user == null) return null;
 
-    final data = await _supabase
-        .from('user_profiles')
-        .select('role')
-        .eq('user_id', user.id)
-        .maybeSingle();
+    Map<String, dynamic>? data;
+    try {
+      data = await _supabase
+          .from('user_profiles')
+          .select('role, account_status')
+          .eq('user_id', user.id)
+          .maybeSingle();
+    } on PostgrestException catch (error) {
+      if (error.code != '42703' || !error.message.contains('account_status')) {
+        rethrow;
+      }
 
+      // Support existing deployments until the role-hierarchy migration runs.
+      data = await _supabase
+          .from('user_profiles')
+          .select('role')
+          .eq('user_id', user.id)
+          .maybeSingle();
+    }
+
+    if (data?['account_status'] == 'suspended') return null;
     return data?['role'] as String?;
   }
 

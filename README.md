@@ -12,12 +12,26 @@
 *   **Real-time Notifications:** In-app visual indicators (red dots and badges) signal when the police have provided feedback.
 *   **Data Portability:** Download and save submitted evidence back to the local device for legal records.
 
-### 👮 For Police Administration (Admins & Super Admin/OC)
+### 👮 For Police Administration
 *   **Safety Control Center:** A professional dashboard showing real-time statistics on active cases, critical incidents, and response rates.
 *   **AI Triage Agent:** A Supabase Edge Function (`swift-handler`) that automatically analyzes descriptions and flags life-threatening cases (e.g., Murder, Fire) as **CRITICAL**.
-*   **User Management:** A full hierarchy system where the Super Admin (OC) can manage roles, reset passwords via Database RPC, and delete accounts.
-*   **Permission Hierarchy:** Multi-level access control (Super Admin, Station Admin, Field Officer, Standard User) with built-in protection to prevent lower-level admins from modifying senior officer accounts.
+*   **User and Station Management:** System Admins manage all staff and CPS assignments; Central Admins manage stations and staff under their assigned CPS; Station Admins manage Field Officers at their station.
+*   **Scoped Case Access:** Central Admins see cases for their CPS and child stations; Station Admins and Field Officers are limited to cases assigned to their station.
+*   **Editable Station Hierarchy:** CPS-to-station relationships are stored in Supabase and can be reassigned by System Admins without importing or hard-coding the PDF directory.
 *   **Evidence Viewer:** Interactive image gallery with pinch-to-zoom and download capabilities for forensic review.
+
+### Supabase role-hierarchy migration
+The migration is a draft and has not been run. Before applying it or deploying
+the updated administration screens, review the deployed `swift-handler`
+implementation to ensure it does not provide an alternate, unscoped
+staff-account creation path. Then apply
+[`supabase/migrations/20261017000000_admin_hierarchy.sql`](./supabase/migrations/20261017000000_admin_hierarchy.sql)
+in the Supabase SQL Editor. The migration preserves existing station rows,
+renames existing `super_admin` accounts to `system_admin`, and maps existing
+`admin` accounts to unassigned `station_admin` accounts. System Admins must
+then mark the appropriate existing station records as CPS entries and assign
+child stations to them. Existing stations such as Kisubi are retained; the
+directory PDF is not used to assign command boundaries.
 
 ## 🛠️ Tech Stack
 *   **Frontend:** Flutter (Mobile-First, Web Compatible)

@@ -2,11 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:intl/intl.dart';
 import '../core/auth_service.dart';
+import '../core/admin_role.dart';
 import 'welcome_screen.dart';
 import 'user_management_screen.dart';
 import 'add_admin_screen.dart';
 import 'case_detail_screen.dart';
 import 'all_reports_screen.dart';
+import 'station_management_screen.dart';
 
 class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
@@ -21,6 +23,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
   // Admin Info - Initialized with defaults to prevent crashes
   String _adminName = "Administrator";
   String _adminRole = "Personnel";
+  AdminRole? _currentRole;
 
   // Statistics
   int _totalIncidentsCount = 0;
@@ -74,9 +77,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
           // Profile extraction
           _adminName =
               "${profileData?['first_name'] ?? 'Admin'} ${profileData?['last_name'] ?? ''}";
-          _adminRole = profileData?['role'] == 'super_admin'
-              ? "Super Admin"
-              : "Station Admin";
+          _currentRole = AdminRole.fromDatabase(
+            profileData?['role'] as String?,
+          );
+          _adminRole = _currentRole?.label ?? "Personnel";
 
           // List and Count management
           _totalIncidentsCount = allIncidents.length;
@@ -581,19 +585,34 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   isSelected: true,
                   onTap: () => Navigator.pop(context),
                 ),
-                _buildDrawerItem(
-                  icon: Icons.people_alt_rounded,
-                  label: "User Management",
-                  onTap: () {
-                    Navigator.pop(context);
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => const UserManagementScreen(),
-                      ),
-                    );
-                  },
-                ),
+                if (_currentRole?.canManageStaff == true)
+                  _buildDrawerItem(
+                    icon: Icons.people_alt_rounded,
+                    label: "User Management",
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const UserManagementScreen(),
+                        ),
+                      );
+                    },
+                  ),
+                if (_currentRole?.canManageStations == true)
+                  _buildDrawerItem(
+                    icon: Icons.local_police_rounded,
+                    label: "Station Management",
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (context) => const StationManagementScreen(),
+                        ),
+                      );
+                    },
+                  ),
                 _buildDrawerItem(
                   icon: Icons.analytics_rounded,
                   label: "Reports & Analytics",
@@ -658,6 +677,10 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   Widget _buildFABs() {
+    if (_currentRole?.canManageStaff != true) {
+      return const SizedBox.shrink();
+    }
+
     return Row(
       mainAxisAlignment: MainAxisAlignment.end,
       children: [

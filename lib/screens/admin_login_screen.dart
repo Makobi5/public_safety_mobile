@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import '../core/auth_service.dart';
+import '../core/admin_role.dart';
+import '../core/error_handler.dart';
 import 'admin_dashboard.dart';
 
 class AdminLoginScreen extends StatefulWidget {
@@ -33,7 +36,8 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
       // 2. Check Role
       final role = await AuthService().getUserRole();
 
-      if (role == 'admin' || role == 'super_admin') {
+      final adminRole = AdminRole.fromDatabase(role);
+      if (adminRole?.canAccessAdminPortal == true) {
         if (mounted) {
           Navigator.pushReplacement(
             context,
@@ -44,22 +48,20 @@ class _AdminLoginScreenState extends State<AdminLoginScreen> {
         // Wrong account type: Log them out immediately
         await AuthService().signOut();
         _showErrorSnackBar(
-          "Access Denied: This account does not have Admin privileges.",
+          role == null
+              ? "Unable to verify your account role. Confirm that the admin hierarchy migration has been applied."
+              : "Access Denied: This account does not have Admin privileges.",
         );
       }
     } catch (e) {
-      debugPrint("DEBUG AUTH ERROR: $e");
-      String message = "An unexpected error occurred.";
-      final errorString = e.toString().toLowerCase();
-
-      if (errorString.contains('invalid_credentials')) {
-        message = "Incorrect email or password.";
-      } else if (errorString.contains('network_error')) {
-        message = "No internet connection.";
-      } else if (errorString.contains('too_many_requests')) {
-        message = "Too many attempts. Try again in a minute.";
+      String message;
+      if (e is PostgrestException) {
+        message =
+            "Signed in, but couldn't verify the account role. "
+            "Check that the latest Supabase migration is applied. "
+            "Database error: ${e.message}";
       } else {
-        message = "Error: ${e.toString().split(':').last.trim()}";
+        message = ErrorHandler.getFriendlyErrorMessage(e);
       }
       _showErrorSnackBar(message);
     } finally {
