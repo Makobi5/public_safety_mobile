@@ -260,6 +260,18 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
               station['station_type']?.toString().toLowerCase() == 'station',
         );
       }
+      if (role == 'central_admin' || role == 'station_admin') {
+        choices = choices.where((station) {
+          final stationId = station['id']?.toString();
+          return !_users.any(
+            (user) =>
+                user['user_id']?.toString() !=
+                    targetUser['user_id']?.toString() &&
+                user['role'] == role &&
+                user['assigned_station_id']?.toString() == stationId,
+          );
+        });
+      }
       return choices.toList();
     }
 

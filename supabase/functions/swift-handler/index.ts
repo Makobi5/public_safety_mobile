@@ -110,22 +110,93 @@ serve(async (req) => {
         typeof password !== "string" ||
         typeof firstName !== "string" ||
         typeof lastName !== "string" ||
-        typeof role !== "string"
+        typeof role !== "string" ||
+        ![
+          "system_admin",
+          "central_admin",
+          "station_admin",
+          "field_officer",
+        ].includes(role)
       ) {
         throw new HttpError("Invalid account details.", 400);
       }
 
-      const { data, error } = await callerClient.rpc("admin_create_user", {
-        new_email: email,
-        new_password: password,
-        new_first_name: firstName,
-        new_last_name: lastName,
-        new_role: role,
-        new_station_id: stationId ?? null,
-      });
-      if (error) throw new HttpError(error.message, 403);
+      if (
+        password.length < 6 ||
+        !email.trim() ||
+        !firstName.trim() ||
+        !lastName.trim()
+      ) {
+        throw new HttpError(
+          "Provide an email, first name, last name, and password of at least 6 characters.",
+          400,
+        );
+      }
 
-      return jsonResponse({ success: true, user_id: data });
+      const { data: canAssign, error: permissionError } = await callerClient.rpc(
+        "can_assign_role",
+        {
+          target_role: role,
+          target_station_id: stationId ?? null,
+        },
+      );
+      if (permissionError) throw permissionError;
+      if (canAssign !== true) {
+        throw new HttpError("You cannot create this role at this location.", 403);
+      }
+
+      const serviceClient = createClient(supabaseUrl, serviceRoleKey, {
+        auth: { autoRefreshToken: false, persistSession: false },
+      });
+      const normalizedEmail = email.trim().toLowerCase();
+      const { data: created, error: createError } =
+        await serviceClient.auth.admin.createUser({
+          email: normalizedEmail,
+          password,
+          email_confirm: true,
+          user_metadata: {
+            first_name: firstName.trim(),
+            last_name: lastName.trim(),
+          },
+        });
+      if (createError) throw new HttpError(createError.message, 400);
+      if (!created.user) throw new Error("Supabase Auth did not return a user.");
+
+      const { error: profileError } = await serviceClient
+        .from("user_profiles")
+        .insert({
+          user_id: created.user.id,
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          email: normalizedEmail,
+          role,
+          assigned_station_id: stationId ?? null,
+          account_status: "active",
+          region: "System Assigned",
+          district: "System Assigned",
+          sub_county: "System Assigned",
+          village_area: "Headquarters",
+        });
+      if (profileError) {
+        const { error: cleanupError } =
+          await serviceClient.auth.admin.deleteUser(created.user.id);
+        if (cleanupError) {
+          console.error(
+            "Failed to remove Auth user after profile creation failed:",
+            cleanupError,
+          );
+          throw new HttpError(
+            `Profile creation failed and the Auth account could not be rolled back. Contact a System Admin. ${profileError.message}`,
+            500,
+          );
+        }
+        throw new HttpError(
+          `Could not create the staff profile: ${profileError.message}`,
+          400,
+        );
+      }
+
+      return jsonResponse({ success: true, user_id: created.user.id });
     }
 
     if (action === "triage-incident") {

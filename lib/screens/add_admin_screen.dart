@@ -22,6 +22,10 @@ class _AddAdminScreenState extends State<AddAdminScreen> {
   String _selectedRole = 'field_officer';
   String? _selectedStationId;
   List<Map<String, dynamic>> _stations = [];
+  Map<String, Set<String>> _occupiedOcAssignments = {
+    'central_admin': <String>{},
+    'station_admin': <String>{},
+  };
   bool _isLoading = true;
   bool _isCreating = false;
   String? _loadError;
@@ -58,11 +62,21 @@ class _AddAdminScreenState extends State<AddAdminScreen> {
     }
 
     if (_selectedRole == 'central_admin') {
-      stations = stations.where((station) => station['station_type'] == 'cps');
+      stations = stations.where(
+        (station) =>
+            station['station_type'] == 'cps' &&
+            !(_occupiedOcAssignments['central_admin'] ?? <String>{}).contains(
+              station['id']?.toString(),
+            ),
+      );
     } else if (_selectedRole == 'station_admin' ||
         _selectedRole == 'field_officer') {
       stations = stations.where(
-        (station) => station['station_type'] == 'station',
+        (station) =>
+            station['station_type'] == 'station' &&
+            (_selectedRole == 'field_officer' ||
+                !(_occupiedOcAssignments['station_admin'] ?? <String>{})
+                    .contains(station['id']?.toString())),
       );
     } else {
       return [];
@@ -93,12 +107,30 @@ class _AddAdminScreenState extends State<AddAdminScreen> {
           .from('police_stations')
           .select('id, name, district, station_type, parent_station_id')
           .order('name');
+      final existingOcs = List<Map<String, dynamic>>.from(
+        await _supabase
+            .from('user_profiles')
+            .select('role, assigned_station_id')
+            .inFilter('role', ['central_admin', 'station_admin']),
+      );
+      final occupiedAssignments = <String, Set<String>>{
+        'central_admin': <String>{},
+        'station_admin': <String>{},
+      };
+      for (final profile in existingOcs) {
+        final role = profile['role']?.toString();
+        final stationId = profile['assigned_station_id']?.toString();
+        if (stationId != null && occupiedAssignments.containsKey(role)) {
+          occupiedAssignments[role]!.add(stationId);
+        }
+      }
 
       if (!mounted) return;
       setState(() {
         _currentRole = AdminRole.fromDatabase(profile['role'] as String?);
         _currentStationId = profile['assigned_station_id']?.toString();
         _stations = List<Map<String, dynamic>>.from(stations);
+        _occupiedOcAssignments = occupiedAssignments;
         final roles = _availableRoles;
         if (roles.isNotEmpty) _selectedRole = roles.last;
         _selectedStationId = _availableStations.firstOrNull?['id']?.toString();
@@ -113,6 +145,94 @@ class _AddAdminScreenState extends State<AddAdminScreen> {
     }
   }
 
+  Future<String?> _showStationPicker(
+    List<Map<String, dynamic>> stations,
+    String label,
+  ) async {
+    final searchController = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (dialogContext) {
+          var query = '';
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              final normalizedQuery = query.trim().toLowerCase();
+              final matchingStations = stations.where((station) {
+                final name = station['name']?.toString().toLowerCase() ?? '';
+                final district =
+                    station['district']?.toString().toLowerCase() ?? '';
+                return name.contains(normalizedQuery) ||
+                    district.contains(normalizedQuery);
+              }).toList();
+              return AlertDialog(
+                title: Text('Select $label'),
+                content: SizedBox(
+                  width: 420,
+                  height: 360,
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: searchController,
+                        autofocus: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Search police locations',
+                          hintText: 'Name or district',
+                          prefixIcon: Icon(Icons.search),
+                        ),
+                        onChanged: (value) =>
+                            setDialogState(() => query = value),
+                      ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: matchingStations.isEmpty
+                            ? const Center(
+                                child: Text('No matching locations.'),
+                              )
+                            : ListView.builder(
+                                itemCount: matchingStations.length,
+                                itemBuilder: (context, index) {
+                                  final station = matchingStations[index];
+                                  final id = station['id'].toString();
+                                  return ListTile(
+                                    title: Text(
+                                      station['name']?.toString() ??
+                                          'Unnamed location',
+                                    ),
+                                    subtitle: Text(
+                                      station['district']?.toString() ?? '',
+                                    ),
+                                    trailing: id == _selectedStationId
+                                        ? const Icon(
+                                            Icons.check,
+                                            color: Color(0xFF003366),
+                                          )
+                                        : null,
+                                    onTap: () =>
+                                        Navigator.pop(dialogContext, id),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('Cancel'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      searchController.dispose();
+    }
+  }
+
   Future<void> _createNewAdmin() async {
     if (!_formKey.currentState!.validate()) return;
     if (_selectedRole != 'system_admin' && _selectedStationId == null) {
@@ -122,15 +242,16 @@ class _AddAdminScreenState extends State<AddAdminScreen> {
 
     setState(() => _isCreating = true);
     try {
-      await _supabase.rpc(
-        'admin_create_user',
-        params: {
-          'new_email': _emailController.text.trim(),
-          'new_password': _passwordController.text,
-          'new_first_name': _firstNameController.text.trim(),
-          'new_last_name': _lastNameController.text.trim(),
-          'new_role': _selectedRole,
-          'new_station_id': _selectedStationId,
+      await _supabase.functions.invoke(
+        'swift-handler',
+        body: {
+          'action': 'create-admin',
+          'email': _emailController.text.trim(),
+          'password': _passwordController.text,
+          'first_name': _firstNameController.text.trim(),
+          'last_name': _lastNameController.text.trim(),
+          'role': _selectedRole,
+          'station_id': _selectedStationId,
         },
       );
 
@@ -235,43 +356,63 @@ class _AddAdminScreenState extends State<AddAdminScreen> {
                         ),
                         if (_selectedRole != 'system_admin') ...[
                           const SizedBox(height: 12),
-                          DropdownButtonFormField<String>(
-                            value:
-                                stations.any(
-                                  (station) =>
-                                      station['id']?.toString() ==
-                                      _selectedStationId,
-                                )
-                                ? _selectedStationId
-                                : null,
-                            decoration: InputDecoration(
-                              labelText: _selectedRole == 'central_admin'
+                          Builder(
+                            builder: (context) {
+                              final selected = stations.where(
+                                (station) =>
+                                    station['id']?.toString() ==
+                                    _selectedStationId,
+                              );
+                              final selectedStation = selected.isEmpty
+                                  ? null
+                                  : selected.first;
+                              final label = _selectedRole == 'central_admin'
                                   ? 'Assigned CPS'
-                                  : 'Assigned Police Station',
-                            ),
-                            items: stations
-                                .map(
-                                  (station) => DropdownMenuItem(
-                                    value: station['id'].toString(),
-                                    child: Text(
-                                      '${station['name']} — ${station['district']}',
-                                      overflow: TextOverflow.ellipsis,
+                                  : 'Assigned Police Station';
+                              final isOcRole =
+                                  _selectedRole == 'central_admin' ||
+                                  _selectedRole == 'station_admin';
+                              return InkWell(
+                                onTap: stations.isEmpty
+                                    ? null
+                                    : () async {
+                                        final id = await _showStationPicker(
+                                          stations,
+                                          label,
+                                        );
+                                        if (id != null && mounted) {
+                                          setState(
+                                            () => _selectedStationId = id,
+                                          );
+                                        }
+                                      },
+                                child: InputDecorator(
+                                  decoration: InputDecoration(
+                                    labelText: label,
+                                    helperText: stations.isEmpty && isOcRole
+                                        ? 'All eligible locations already have an OC.'
+                                        : stations.isEmpty
+                                        ? 'No locations are configured for this role.'
+                                        : 'Tap to search by name or district',
+                                    suffixIcon: const Icon(Icons.search),
+                                    enabled: stations.isNotEmpty,
+                                  ),
+                                  child: Text(
+                                    selectedStation == null
+                                        ? 'No location selected'
+                                        : '${selectedStation['name']} — ${selectedStation['district']}',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: stations.isEmpty
+                                          ? Theme.of(context).disabledColor
+                                          : null,
                                     ),
                                   ),
-                                )
-                                .toList(),
-                            onChanged: (value) =>
-                                setState(() => _selectedStationId = value),
+                                ),
+                              );
+                            },
                           ),
-                          if (stations.isEmpty)
-                            const Padding(
-                              padding: EdgeInsets.only(top: 8),
-                              child: Text(
-                                'No stations are available for this assignment. '
-                                'A System Admin must configure the CPS/station hierarchy first.',
-                                style: TextStyle(color: Colors.red),
-                              ),
-                            ),
                         ],
                         const SizedBox(height: 28),
                         SizedBox(

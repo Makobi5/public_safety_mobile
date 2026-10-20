@@ -3,6 +3,13 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 class ErrorHandler {
   static String getFriendlyErrorMessage(dynamic e) {
     if (e is AuthException) {
+      if (e.message.toLowerCase().contains('database error querying schema')) {
+        return "Supabase could not read this account's authentication record. "
+            'If it was created before the latest staff-account update, ask a '
+            'System Admin to delete and recreate it after deploying the '
+            'updated swift-handler function.';
+      }
+
       // Supabase specific error codes
       switch (e.code) {
         case 'invalid_credentials':
