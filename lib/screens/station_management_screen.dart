@@ -12,18 +12,29 @@ class StationManagementScreen extends StatefulWidget {
 
 class _StationManagementScreenState extends State<StationManagementScreen> {
   final _supabase = Supabase.instance.client;
+  final _searchController = TextEditingController();
   List<Map<String, dynamic>> _stations = [];
   AdminRole? _role;
   String? _assignedStationId;
   bool _isLoading = true;
   String? _loadError;
+  String _searchQuery = '';
+  Map<String, Map<String, dynamic>> _officersInCharge = {};
 
   bool get _isSystemAdmin => _role == AdminRole.systemAdmin;
+  bool get _canAssignStationOcs =>
+      _isSystemAdmin || _role == AdminRole.centralAdmin;
 
   @override
   void initState() {
     super.initState();
     _loadStations();
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadStations() async {
@@ -60,10 +71,49 @@ class _StationManagementScreenState extends State<StationManagementScreen> {
             )
             .toList();
       }
+
+      final stationIds = stations
+          .where(
+            (station) =>
+                station['station_type'] == 'station' ||
+                station['station_type'] == 'cps',
+          )
+          .map((station) => station['id'].toString())
+          .toList();
+      final officers = stationIds.isEmpty
+          ? <Map<String, dynamic>>[]
+          : List<Map<String, dynamic>>.from(
+              await _supabase
+                  .from('user_profiles')
+                  .select(
+                    'user_id, assigned_station_id, first_name, last_name, email, role',
+                  )
+                  .inFilter('assigned_station_id', stationIds)
+                  .inFilter('role', ['station_admin', 'central_admin'])
+                  .eq('account_status', 'active'),
+            );
+
+      final officersByStation = <String, Map<String, dynamic>>{};
+      for (final officer in officers) {
+        final officerStationId = officer['assigned_station_id']?.toString();
+        final assignedStation = stations.where(
+          (item) => item['id']?.toString() == officerStationId,
+        );
+        if (assignedStation.isEmpty) continue;
+        final stationType = assignedStation.first['station_type'];
+        final isOcRole = stationType == 'cps'
+            ? officer['role'] == 'central_admin'
+            : stationType == 'station' && officer['role'] == 'station_admin';
+        if (isOcRole && officerStationId != null) {
+          officersByStation[officerStationId] = officer;
+        }
+      }
+
       setState(() {
         _role = role;
         _assignedStationId = assignedId;
         _stations = stations;
+        _officersInCharge = officersByStation;
         _isLoading = false;
       });
     } catch (error) {
@@ -129,7 +179,7 @@ class _StationManagementScreenState extends State<StationManagementScreen> {
                 ),
                 if (_isSystemAdmin)
                   DropdownButtonFormField<String>(
-                    value: stationType,
+                    initialValue: stationType,
                     decoration: const InputDecoration(labelText: 'Type'),
                     items: const [
                       DropdownMenuItem(value: 'cps', child: Text('CPS')),
@@ -152,7 +202,7 @@ class _StationManagementScreenState extends State<StationManagementScreen> {
                   ),
                 if (_isSystemAdmin && stationType != 'cps')
                   DropdownButtonFormField<String>(
-                    value:
+                    initialValue:
                         parentChoices.any(
                           (item) => item['id']?.toString() == parentStationId,
                         )
@@ -184,6 +234,53 @@ class _StationManagementScreenState extends State<StationManagementScreen> {
                       child: Text('This station will be added under your CPS.'),
                     ),
                   ),
+                if (isEditing &&
+                    (stationType == 'station' || stationType == 'cps'))
+                  Builder(
+                    builder: (context) {
+                      final oc = _officersInCharge[station['id'].toString()];
+                      final ocName = oc == null
+                          ? 'Not assigned'
+                          : '${oc['first_name'] ?? ''} ${oc['last_name'] ?? ''}'
+                                .trim();
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 16),
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.surfaceContainerHighest,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                stationType == 'cps'
+                                    ? 'CPS Officer in Charge'
+                                    : 'Station Officer in Charge',
+                                style: Theme.of(context).textTheme.titleSmall
+                                    ?.copyWith(fontWeight: FontWeight.bold),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(ocName),
+                              if (oc != null) ...[
+                                if (oc['email']?.toString().isNotEmpty == true)
+                                  Text(oc['email'].toString()),
+                                Text(
+                                  stationType == 'cps'
+                                      ? 'Central Admin'
+                                      : 'Station Admin',
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
               ],
             ),
           ),
@@ -197,7 +294,7 @@ class _StationManagementScreenState extends State<StationManagementScreen> {
                 final name = nameController.text.trim();
                 final district = districtController.text.trim();
                 if (name.isEmpty || district.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
+                  ScaffoldMessenger.of(dialogContext).showSnackBar(
                     const SnackBar(
                       content: Text('Station name and district are required.'),
                     ),
@@ -232,9 +329,13 @@ class _StationManagementScreenState extends State<StationManagementScreen> {
                   }
                 } catch (error) {
                   if (dialogContext.mounted) {
-                    ScaffoldMessenger.of(dialogContext).showSnackBar(
-                      SnackBar(content: Text('Unable to save station: $error')),
-                    );
+                    final message =
+                        error is PostgrestException && error.code == '42501'
+                        ? 'The database rejected this station change. Apply the latest station OC migration and confirm the station is assigned under your CPS.'
+                        : 'Unable to save station: $error';
+                    ScaffoldMessenger.of(
+                      dialogContext,
+                    ).showSnackBar(SnackBar(content: Text(message)));
                   }
                 }
               },
@@ -249,7 +350,109 @@ class _StationManagementScreenState extends State<StationManagementScreen> {
     districtController.dispose();
     addressController.dispose();
     phoneController.dispose();
-    if (saved == true) _loadStations();
+    if (saved == true) await _loadStations();
+  }
+
+  Future<void> _showStationOcDialog(Map<String, dynamic> station) async {
+    final stationId = station['id'].toString();
+    try {
+      final candidates = List<Map<String, dynamic>>.from(
+        await _supabase
+            .from('user_profiles')
+            .select('user_id, first_name, last_name, email, role')
+            .eq('assigned_station_id', stationId)
+            .eq('account_status', 'active')
+            .inFilter('role', ['station_admin', 'field_officer'])
+            .order('first_name'),
+      );
+      if (!mounted) return;
+
+      final currentOcId = _officersInCharge[stationId]?['user_id']?.toString();
+      final selectedUserId = await showDialog<String?>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text('Station OC — ${station['name']}'),
+          content: SizedBox(
+            width: 420,
+            height: 360,
+            child: ListView(
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.person_off_outlined),
+                  title: const Text('Not set'),
+                  trailing: currentOcId == null
+                      ? const Icon(Icons.check, color: Color(0xFF003366))
+                      : null,
+                  onTap: () => Navigator.pop(dialogContext, ''),
+                ),
+                for (final candidate in candidates)
+                  ListTile(
+                    leading: const Icon(Icons.person_outline),
+                    title: Text(
+                      '${candidate['first_name'] ?? ''} ${candidate['last_name'] ?? ''}'
+                          .trim(),
+                    ),
+                    subtitle: Text(
+                      '${candidate['email'] ?? ''} • ${candidate['role'] == 'station_admin' ? 'Current Station Admin' : 'Field Officer'}',
+                    ),
+                    trailing: candidate['user_id']?.toString() == currentOcId
+                        ? const Icon(Icons.check, color: Color(0xFF003366))
+                        : null,
+                    onTap: () => Navigator.pop(
+                      dialogContext,
+                      candidate['user_id'].toString(),
+                    ),
+                  ),
+                if (candidates.isEmpty)
+                  const ListTile(
+                    title: Text('No active Station Admins or Field Officers'),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('Cancel'),
+            ),
+          ],
+        ),
+      );
+      if (selectedUserId == null || !mounted) return;
+
+      await _supabase.rpc(
+        'admin_assign_station_oc',
+        params: {
+          'target_station_id': stationId,
+          'target_user_id': selectedUserId.isEmpty ? null : selectedUserId,
+        },
+      );
+      await _loadStations();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Unable to assign station OC: $error')),
+        );
+      }
+    }
+  }
+
+  List<Map<String, dynamic>> get _visibleStations {
+    final query = _searchQuery.trim().toLowerCase();
+    if (query.isEmpty) return _stations;
+    return _stations.where((station) {
+      final name = station['name']?.toString().toLowerCase() ?? '';
+      final district = station['district']?.toString().toLowerCase() ?? '';
+      final type = station['station_type']?.toString().toLowerCase() ?? '';
+      final ocDetails = _officersInCharge[station['id']?.toString()];
+      final oc =
+          '${ocDetails?['first_name'] ?? ''} ${ocDetails?['last_name'] ?? ''} ${ocDetails?['email'] ?? ''}'
+              .toLowerCase();
+      return name.contains(query) ||
+          district.contains(query) ||
+          type.contains(query) ||
+          oc.contains(query);
+    }).toList();
   }
 
   @override
@@ -280,41 +483,100 @@ class _StationManagementScreenState extends State<StationManagementScreen> {
           ? const Center(
               child: Text('No stations are assigned to this area yet.'),
             )
-          : ListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: _stations.length,
-              itemBuilder: (context, index) {
-                final station = _stations[index];
-                final type = station['station_type']?.toString() ?? 'station';
-                final parent = _stations.where(
-                  (item) =>
-                      item['id']?.toString() ==
-                      station['parent_station_id']?.toString(),
-                );
-                final parentName = parent.isEmpty
-                    ? null
-                    : parent.first['name']?.toString();
-                return Card(
-                  child: ListTile(
-                    leading: Icon(
-                      type == 'cps'
-                          ? Icons.account_balance
-                          : Icons.local_police,
-                      color: const Color(0xFF003366),
+          : Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      labelText: 'Search stations',
+                      hintText: 'Name, district, type, or OC',
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: _searchQuery.isEmpty
+                          ? null
+                          : IconButton(
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() => _searchQuery = '');
+                              },
+                              icon: const Icon(Icons.clear),
+                            ),
+                      border: const OutlineInputBorder(),
                     ),
-                    title: Text(station['name']?.toString() ?? 'Unnamed'),
-                    subtitle: Text(
-                      '${station['district']} • ${type.toUpperCase()}'
-                      '${parentName == null ? '' : ' • $parentName'}',
-                    ),
-                    trailing: IconButton(
-                      tooltip: 'Edit station',
-                      onPressed: () => _showStationDialog(station: station),
-                      icon: const Icon(Icons.edit_outlined),
-                    ),
+                    onChanged: (value) => setState(() => _searchQuery = value),
                   ),
-                );
-              },
+                ),
+                Expanded(
+                  child: _visibleStations.isEmpty
+                      ? const Center(child: Text('No matching stations.'))
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(16),
+                          itemCount: _visibleStations.length,
+                          itemBuilder: (context, index) {
+                            final station = _visibleStations[index];
+                            final stationId = station['id'].toString();
+                            final type =
+                                station['station_type']?.toString() ??
+                                'station';
+                            final parent = _stations.where(
+                              (item) =>
+                                  item['id']?.toString() ==
+                                  station['parent_station_id']?.toString(),
+                            );
+                            final parentName = parent.isEmpty
+                                ? null
+                                : parent.first['name']?.toString();
+                            final oc = _officersInCharge[stationId];
+                            final ocName = oc == null
+                                ? 'Not set'
+                                : '${oc['first_name'] ?? ''} ${oc['last_name'] ?? ''}'
+                                      .trim();
+                            final showOc = type == 'station' || type == 'cps';
+
+                            return Card(
+                              child: ListTile(
+                                leading: Icon(
+                                  type == 'cps'
+                                      ? Icons.account_balance
+                                      : Icons.local_police,
+                                  color: const Color(0xFF003366),
+                                ),
+                                title: Text(
+                                  station['name']?.toString() ?? 'Unnamed',
+                                ),
+                                subtitle: Text(
+                                  '${station['district']} • ${type.toUpperCase()}'
+                                  '${parentName == null ? '' : ' • $parentName'}'
+                                  '${showOc ? ' • OC: $ocName' : ''}',
+                                ),
+                                trailing: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    if (_canAssignStationOcs &&
+                                        type == 'station')
+                                      IconButton(
+                                        tooltip: 'Set Station OC',
+                                        onPressed: () =>
+                                            _showStationOcDialog(station),
+                                        icon: const Icon(
+                                          Icons.person_add_alt_1_outlined,
+                                        ),
+                                      ),
+                                    IconButton(
+                                      tooltip: 'Edit station',
+                                      onPressed: () =>
+                                          _showStationDialog(station: station),
+                                      icon: const Icon(Icons.edit_outlined),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
             ),
     );
   }

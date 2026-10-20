@@ -25,7 +25,6 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     _fetchUsers();
   }
 
-  // Determine if the current logged-in person is a Super Admin or regular Admin
   Future<void> _loadCurrentRole() async {
     try {
       final user = supabase.auth.currentUser;
@@ -37,15 +36,11 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           .select('role, assigned_station_id')
           .eq('user_id', user.id)
           .maybeSingle();
-      final stations = await supabase
-          .from('police_stations')
-          .select('id, name, district, station_type, parent_station_id')
-          .order('name');
+      await _refreshStations();
       if (mounted) {
         setState(() {
           _currentUserRole = profile?['role'] as String?;
           _currentUserStationId = profile?['assigned_station_id']?.toString();
-          _stations = List<Map<String, dynamic>>.from(stations);
         });
       }
     } catch (error) {
@@ -56,6 +51,16 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
           ),
         );
       }
+    }
+  }
+
+  Future<void> _refreshStations() async {
+    final data = await supabase
+        .from('police_stations')
+        .select('id, name, district, station_type, parent_station_id')
+        .order('name');
+    if (mounted) {
+      setState(() => _stations = List<Map<String, dynamic>>.from(data));
     }
   }
 
@@ -96,8 +101,109 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
     });
   }
 
+  Future<String?> _showStationPicker(
+    List<Map<String, dynamic>> stations,
+    String? selectedStationId,
+    String label,
+  ) async {
+    final searchController = TextEditingController();
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (dialogContext) {
+          var query = '';
+          return StatefulBuilder(
+            builder: (context, setDialogState) {
+              final normalizedQuery = query.trim().toLowerCase();
+              final filteredStations = stations.where((station) {
+                final name = station['name']?.toString().toLowerCase() ?? '';
+                final district =
+                    station['district']?.toString().toLowerCase() ?? '';
+                return name.contains(normalizedQuery) ||
+                    district.contains(normalizedQuery);
+              }).toList();
+              return AlertDialog(
+                title: Text('Select $label'),
+                content: SizedBox(
+                  width: 420,
+                  height: 360,
+                  child: Column(
+                    children: [
+                      TextField(
+                        controller: searchController,
+                        autofocus: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Search locations',
+                          hintText: 'Station name or district',
+                          prefixIcon: Icon(Icons.search),
+                        ),
+                        onChanged: (value) =>
+                            setDialogState(() => query = value),
+                      ),
+                      const SizedBox(height: 8),
+                      Expanded(
+                        child: filteredStations.isEmpty
+                            ? const Center(
+                                child: Text('No matching locations.'),
+                              )
+                            : ListView.builder(
+                                itemCount: filteredStations.length,
+                                itemBuilder: (context, index) {
+                                  final station = filteredStations[index];
+                                  final stationId = station['id'].toString();
+                                  return ListTile(
+                                    title: Text(
+                                      station['name']?.toString() ??
+                                          'Unnamed location',
+                                    ),
+                                    subtitle: Text(
+                                      station['district']?.toString() ?? '',
+                                    ),
+                                    trailing: stationId == selectedStationId
+                                        ? const Icon(
+                                            Icons.check,
+                                            color: Color(0xFF003366),
+                                          )
+                                        : null,
+                                    onTap: () =>
+                                        Navigator.pop(dialogContext, stationId),
+                                  );
+                                },
+                              ),
+                      ),
+                    ],
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('Cancel'),
+                  ),
+                ],
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      searchController.dispose();
+    }
+  }
+
   // --- 1. EDIT ROLE DIALOG (Implementation of Screenshot 2) ---
-  void _showEditRoleDialog(Map<String, dynamic> targetUser) {
+  Future<void> _showEditRoleDialog(Map<String, dynamic> targetUser) async {
+    try {
+      await _refreshStations();
+    } catch (error) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Unable to load police stations: $error')),
+        );
+      }
+      return;
+    }
+    if (!mounted) return;
+
     final actorRole = AdminRole.fromDatabase(_currentUserRole);
     final targetRole = AdminRole.fromDatabase(targetUser['role']?.toString());
     if (actorRole == null ||
@@ -144,10 +250,14 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
         );
       }
       if (role == 'central_admin') {
-        choices = choices.where((station) => station['station_type'] == 'cps');
+        choices = choices.where(
+          (station) =>
+              station['station_type']?.toString().toLowerCase() == 'cps',
+        );
       } else {
         choices = choices.where(
-          (station) => station['station_type'] == 'station',
+          (station) =>
+              station['station_type']?.toString().toLowerCase() == 'station',
         );
       }
       return choices.toList();
@@ -195,31 +305,60 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                 },
               ),
               if (selectedRole != 'system_admin')
-                DropdownButtonFormField<String>(
-                  value:
-                      availableStations(selectedRole).any(
-                        (station) =>
-                            station['id']?.toString() == selectedStationId,
-                      )
-                      ? selectedStationId
-                      : null,
-                  decoration: InputDecoration(
-                    labelText: selectedRole == 'central_admin'
+                Builder(
+                  builder: (context) {
+                    final stations = availableStations(selectedRole);
+                    Map<String, dynamic>? selectedStation;
+                    for (final station in stations) {
+                      if (station['id']?.toString() == selectedStationId) {
+                        selectedStation = station;
+                        break;
+                      }
+                    }
+                    final label = selectedRole == 'central_admin'
                         ? 'Assigned CPS'
-                        : 'Assigned Police Station',
-                  ),
-                  items: availableStations(selectedRole)
-                      .map(
-                        (station) => DropdownMenuItem(
-                          value: station['id'].toString(),
-                          child: Text(
-                            '${station['name']} — ${station['district']}',
+                        : 'Assigned Police Station';
+                    return InkWell(
+                      onTap: stations.isEmpty
+                          ? null
+                          : () async {
+                              final stationId = await _showStationPicker(
+                                stations,
+                                selectedStationId,
+                                label,
+                              );
+                              if (stationId != null) {
+                                setDialogState(
+                                  () => selectedStationId = stationId,
+                                );
+                              }
+                            },
+                      child: InputDecorator(
+                        decoration: InputDecoration(
+                          labelText: label,
+                          helperText: stations.isEmpty
+                              ? selectedRole == 'central_admin'
+                                    ? 'No CPS found. Classify a location as CPS in Station Management, then reopen this dialog.'
+                                    : 'No eligible police stations found. Check station classifications.'
+                              : 'Tap to search by name or district',
+                          suffixIcon: const Icon(Icons.search),
+                          enabled: stations.isNotEmpty,
+                        ),
+                        child: Text(
+                          selectedStation == null
+                              ? 'No eligible locations'
+                              : '${selectedStation['name']} — ${selectedStation['district']}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: stations.isEmpty
+                                ? Theme.of(context).disabledColor
+                                : null,
                           ),
                         ),
-                      )
-                      .toList(),
-                  onChanged: (value) =>
-                      setDialogState(() => selectedStationId = value),
+                      ),
+                    );
+                  },
                 ),
               DropdownButtonFormField<String>(
                 value: selectedStatus,
@@ -251,29 +390,37 @@ class _UserManagementScreenState extends State<UserManagementScreen> {
                   borderRadius: BorderRadius.circular(20),
                 ),
               ),
-              onPressed: () async {
-                try {
-                  await supabase.rpc(
-                    'admin_update_user_access',
-                    params: {
-                      'target_user_id': targetUser['user_id'],
-                      'new_role': selectedRole,
-                      'new_station_id': selectedRole == 'system_admin'
-                          ? null
-                          : selectedStationId,
-                      'new_account_status': selectedStatus,
+              onPressed:
+                  selectedRole != 'system_admin' &&
+                      (selectedStationId == null ||
+                          !availableStations(selectedRole).any(
+                            (station) =>
+                                station['id']?.toString() == selectedStationId,
+                          ))
+                  ? null
+                  : () async {
+                      try {
+                        await supabase.rpc(
+                          'admin_update_user_access',
+                          params: {
+                            'target_user_id': targetUser['user_id'],
+                            'new_role': selectedRole,
+                            'new_station_id': selectedRole == 'system_admin'
+                                ? null
+                                : selectedStationId,
+                            'new_account_status': selectedStatus,
+                          },
+                        );
+                        if (mounted) Navigator.pop(context);
+                        _fetchUsers();
+                      } catch (e) {
+                        if (mounted) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: Text("Update failed: $e")),
+                          );
+                        }
+                      }
                     },
-                  );
-                  if (mounted) Navigator.pop(context);
-                  _fetchUsers();
-                } catch (e) {
-                  if (mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text("Update failed: $e")),
-                    );
-                  }
-                }
-              },
               child: const Text(
                 "Update Role",
                 style: TextStyle(color: Colors.white),
